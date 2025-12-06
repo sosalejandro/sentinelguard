@@ -1,10 +1,11 @@
 # SentinelGuard
 
-A comprehensive security scanner for Linux systems written in Go. SentinelGuard performs deep inspection of your system to detect backdoors, rootkits, persistence mechanisms, malicious files, and security misconfigurations.
+A comprehensive security scanner for Linux and Windows systems written in Go. SentinelGuard performs deep inspection of your system to detect backdoors, rootkits, persistence mechanisms, malicious files, and security misconfigurations.
 
 ## Features
 
-- **13 Security Scanners** covering network, processes, filesystem, authentication, and more
+- **16 Security Scanners** covering network, processes, filesystem, authentication, and more
+- **Full Windows Support** with registry, memory injection, and kernel/driver scanning
 - **Cross-Platform Architecture** with strategy pattern for OS-specific implementations
 - **Multiple Output Formats** - Console (colored), JSON, YAML
 - **Concurrent Scanning** with configurable parallelism
@@ -14,21 +15,36 @@ A comprehensive security scanner for Linux systems written in Go. SentinelGuard 
 
 ## Scanners
 
+### Cross-Platform Scanners
+
 | Scanner | Description |
 |---------|-------------|
 | `network` | Suspicious connections, listening ports, reverse shells |
 | `process` | Malicious processes, cryptocurrency miners, shell spawns |
-| `cron` | Suspicious cron jobs and scheduled tasks |
 | `ssh` | SSH misconfigurations, unauthorized keys, weak settings |
-| `persistence` | Startup scripts, systemd units, LD_PRELOAD hooks |
 | `filesystem` | SUID/SGID anomalies, hidden files, world-writable dirs |
 | `user` | Suspicious accounts, UID 0 users, empty passwords |
-| `kernel` | Rootkit detection, hidden kernel modules |
+| `persistence` | Startup scripts, systemd units, LD_PRELOAD hooks |
+| `pdf` | Malicious PDF detection (JavaScript, exploits, payloads) |
+
+### Linux-Specific Scanners
+
+| Scanner | Description |
+|---------|-------------|
+| `cron` | Suspicious cron jobs and scheduled tasks |
+| `kernel` | Rootkit detection, hidden kernel modules, syscall hooks |
 | `pam` | PAM backdoors, authentication bypass |
-| `memory` | Process injection, hidden processes |
+| `memory` | Process injection, hidden processes, LD_PRELOAD |
 | `integrity` | Binary tampering, package verification |
 | `boot` | Boot persistence, GRUB/initramfs modifications |
-| `pdf` | Malicious PDF detection (JavaScript, exploits, payloads) |
+
+### Windows-Specific Scanners
+
+| Scanner | Description |
+|---------|-------------|
+| `windows-registry` | Registry persistence, startup keys, COM hijacking, AppInit DLLs, IFEO injection |
+| `windows-memory` | Process injection, hollowing, suspicious parent-child, typosquatting, credential dumping |
+| `windows-kernel` | Driver rootkits, unsigned drivers, minifilters, WMI persistence, kernel integrity |
 
 ## Installation
 
@@ -49,8 +65,8 @@ sudo mv sentinelguard /usr/local/bin/
 ### Requirements
 
 - Go 1.21 or later (for building)
-- Linux (primary support), macOS/Windows (partial support)
-- Root access recommended for full scanning capabilities
+- Linux or Windows
+- Root/Administrator access recommended for full scanning capabilities
 
 ## Usage
 
@@ -156,80 +172,6 @@ Global Flags:
 | 1 | High severity findings detected |
 | 2 | Critical severity findings detected |
 
-## Output Example
-
-### Console Output
-
-```
-╔════════════════════════════════════════════════════════════╗
-║           SENTINELGUARD SCAN REPORT                        ║
-╚════════════════════════════════════════════════════════════╝
-
-Scan ID:      SCAN-000001
-Start Time:   2025-01-15 10:30:00
-Duration:     45.2s
-Status:       COMPLETED
-
-─── SUMMARY ───────────────────────────────────────────────────
-
-Scanners Executed: 13
-
-Total Findings: 5
-
-  CRITICAL [  0]
-  HIGH     [  2] ██
-  MEDIUM   [  3] ███
-  LOW      [  0]
-  INFO     [  0]
-
-─── FINDINGS ──────────────────────────────────────────────────
-
-▸ NETWORK (2)
-
-  [HIGH] Suspicious outbound connection
-    Process connecting to known malicious IP range
-    Path: /usr/bin/suspicious
-
-  [MEDIUM] Service listening on all interfaces
-    Port 8080 is listening on 0.0.0.0
-```
-
-### JSON Output
-
-```json
-{
-  "scan_id": "SCAN-000001",
-  "start_time": "2025-01-15T10:30:00-05:00",
-  "end_time": "2025-01-15T10:30:45-05:00",
-  "duration": "45.2s",
-  "status": "COMPLETED",
-  "summary": {
-    "total_findings": 5,
-    "critical_count": 0,
-    "high_count": 2,
-    "medium_count": 3,
-    "low_count": 0,
-    "info_count": 0,
-    "scanners_executed": ["network", "process", "ssh", "..."]
-  },
-  "findings": [
-    {
-      "id": "FIND-000001",
-      "category": "NETWORK",
-      "severity": "HIGH",
-      "title": "Suspicious outbound connection",
-      "description": "Process connecting to known malicious IP range",
-      "path": "/usr/bin/suspicious",
-      "timestamp": "2025-01-15T10:30:15-05:00",
-      "details": {
-        "remote_ip": "192.168.1.100",
-        "remote_port": 4444
-      }
-    }
-  ]
-}
-```
-
 ## Detection Capabilities
 
 ### Network Scanner
@@ -255,21 +197,75 @@ Total Findings: 5
 - Exploit patterns (heap spray, NOP sleds)
 - PowerShell/shell command injection
 
-### Persistence Scanner
-- Malicious profile scripts (.bashrc, .profile)
-- Suspicious systemd services
-- LD_PRELOAD hijacking
-- Cron-based persistence
-- Init script modifications
-
-### Kernel Scanner
+### Linux Kernel Scanner
 - Hidden kernel modules
-- Rootkit signatures
+- Known rootkit signatures (Reptile, Diamorphine, etc.)
 - Suspicious module parameters
-- Tainted kernel detection
+- Syscall hooking detection
+- Module signature enforcement
 
-### And More...
-Each scanner implements comprehensive detection rules with continuous updates.
+### Linux Memory Scanner
+- Hidden processes (proc vs ps comparison)
+- Deleted executables
+- LD_PRELOAD injection
+- Suspicious library mappings
+- Process name spoofing
+- ptrace attachment detection
+
+### Windows Registry Scanner
+- Startup/Run key persistence (8+ registry locations)
+- Winlogon Shell/Userinit hijacking
+- Image File Execution Options (IFEO) debugger injection
+- AppInit_DLLs system-wide injection
+- COM object hijacking
+- Browser Helper Objects (BHO)
+- Credential provider abuse
+- LSA security/authentication packages
+- 18+ malicious pattern detections including:
+  - Encoded PowerShell commands
+  - Download cradles (certutil, bitsadmin)
+  - Living-off-the-land binaries (mshta, regsvr32, rundll32)
+
+### Windows Memory/Process Scanner
+- Suspicious parent-child relationships (Office spawning cmd/PowerShell)
+- System processes with wrong parents (lsass, csrss, services.exe)
+- Process name typosquatting (svch0st.exe, lsasss.exe)
+- 25+ suspicious command line patterns
+- Credential dumping detection (mimikatz, procdump lsass)
+- Process hollowing indicators
+- Multiple singleton process detection
+- Dangerous privilege detection (SeDebugPrivilege, SeTcbPrivilege)
+- Suspicious DLL injection in system processes
+
+### Windows Kernel/Driver Scanner
+- Known rootkit driver detection
+- Drivers from suspicious paths
+- System drivers in wrong locations
+- Driver signing enforcement (testsigning, nointegritychecks)
+- Kernel debug mode detection
+- Suspicious minifilter altitudes
+- Hidden/dormant driver detection
+- Secure Boot status
+- HVCI and Credential Guard status
+- Callback abuse (IFEO, SilentProcessExit, AppCertDLLs)
+- WMI event subscription persistence
+
+## MITRE ATT&CK Coverage
+
+SentinelGuard detects techniques from multiple ATT&CK categories:
+
+| Technique ID | Name |
+|--------------|------|
+| T1546.010 | AppInit DLLs |
+| T1546.012 | Image File Execution Options Injection |
+| T1546.003 | WMI Event Subscription |
+| T1546.015 | COM Hijacking |
+| T1055 | Process Injection |
+| T1055.012 | Process Hollowing |
+| T1036.005 | Masquerading: Match Legitimate Name |
+| T1059 | Command and Scripting Interpreter |
+| T1003 | OS Credential Dumping |
+| T1547.001 | Registry Run Keys / Startup Folder |
 
 ## Architecture
 
@@ -322,11 +318,16 @@ export SENTINELGUARD_PDF_PATHS="/custom/path1,/custom/path2"
     fi
 ```
 
-### Cron Job
+### Cron Job / Scheduled Task
 
 ```bash
-# Daily security scan
+# Linux: Daily security scan
 0 2 * * * /usr/local/bin/sentinelguard scan -f json >> /var/log/sentinelguard.log 2>&1
+```
+
+```powershell
+# Windows: Create scheduled task
+schtasks /create /tn "SentinelGuard Daily Scan" /tr "sentinelguard.exe scan -f json" /sc daily /st 02:00
 ```
 
 ### Monitoring Integration
@@ -345,10 +346,11 @@ export SENTINELGUARD_PDF_PATHS="/custom/path1,/custom/path2"
 
 ## Security Considerations
 
-- **Run as root** for complete system visibility
+- **Run as root/Administrator** for complete system visibility
 - **Audit mode**: Use `-f json` for forensic logging
 - **Network scanning** may trigger IDS alerts in monitored environments
 - **PDF scanning** reads file contents - ensure appropriate permissions
+- **Windows registry scanning** requires appropriate permissions for HKLM keys
 
 ## Contributing
 

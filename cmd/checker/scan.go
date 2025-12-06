@@ -171,8 +171,12 @@ func registerScanners(registry *scanner.Registry, platformInfo *platform.Platfor
 	// macOS-specific scanners would go here
 	// if platformInfo.OS == platform.OSDarwin { ... }
 
-	// Windows-specific scanners would go here
-	// if platformInfo.OS == platform.OSWindows { ... }
+	// Windows-specific scanners
+	if platformInfo.OS == platform.OSWindows {
+		registry.Register(scanner.NewWindowsRegistryScanner())
+		registry.Register(scanner.NewWindowsMemoryScanner())
+		registry.Register(scanner.NewWindowsKernelScanner())
+	}
 
 	log.Debug("scanners registered",
 		zap.Int("count", len(registry.GetAll())),
