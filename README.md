@@ -52,7 +52,7 @@ A comprehensive security scanner for Linux and Windows systems written in Go. Se
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/sentinelguard.git
+git clone https://github.com/sosalejandro/sentinelguard.git
 cd sentinelguard
 
 # Build
