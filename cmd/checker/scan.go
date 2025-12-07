@@ -166,6 +166,7 @@ func registerScanners(registry *scanner.Registry, platformInfo *platform.Platfor
 		registry.Register(scanner.NewMemoryScanner())
 		registry.Register(scanner.NewIntegrityScanner())
 		registry.Register(scanner.NewBootScanner())
+		registry.Register(scanner.NewContainerScanner())
 	}
 
 	// macOS-specific scanners would go here

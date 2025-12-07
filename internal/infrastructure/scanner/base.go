@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -82,12 +83,24 @@ func (b *BaseScanner) RunCommand(ctx context.Context, name string, args ...strin
 }
 
 func (b *BaseScanner) FileExists(path string) bool {
-	cmd := exec.Command("test", "-e", path)
-	return cmd.Run() == nil
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func (b *BaseScanner) ReadFile(ctx context.Context, path string) ([]string, error) {
-	return b.RunCommand(ctx, "cat", path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var lines []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines, nil
 }
 
 // ExecCommand executes a command and returns combined output as a string

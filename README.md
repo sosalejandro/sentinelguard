@@ -4,7 +4,7 @@ A comprehensive security scanner for Linux and Windows systems written in Go. Se
 
 ## Features
 
-- **16 Security Scanners** covering network, processes, filesystem, authentication, and more
+- **17 Security Scanners** covering network, processes, filesystem, authentication, and more
 - **Full Windows Support** with registry, memory injection, and kernel/driver scanning (PowerShell-first, WMIC fallback)
 - **Cross-Platform Architecture** with strategy pattern for OS-specific implementations
 - **Multiple Output Formats** - Console (colored), JSON, YAML
@@ -31,18 +31,19 @@ A comprehensive security scanner for Linux and Windows systems written in Go. Se
 
 | Scanner | Description |
 |---------|-------------|
-| `cron` | Suspicious cron jobs and scheduled tasks |
+| `cron` | Suspicious cron jobs, systemd timers, scheduled task analysis |
 | `kernel` | Rootkit detection, hidden kernel modules, syscall hooks |
 | `pam` | PAM backdoors, authentication bypass |
 | `memory` | Process injection, hidden processes, LD_PRELOAD |
 | `integrity` | Binary tampering, package verification |
 | `boot` | Boot persistence, GRUB/initramfs modifications |
+| `container` | Docker/container escape vectors, capability abuse, socket mounts |
 
 ### Windows-Specific Scanners
 
 | Scanner | Description |
 |---------|-------------|
-| `windows-registry` | Registry persistence, startup keys, COM hijacking, AppInit DLLs, IFEO injection |
+| `windows-registry` | Registry persistence, startup keys, COM hijacking, AppInit DLLs, IFEO injection, scheduled task scanning |
 | `windows-memory` | Process injection, hollowing, suspicious parent-child, typosquatting, credential dumping |
 | `windows-kernel` | Driver rootkits, unsigned drivers, minifilters, WMI persistence, kernel integrity |
 
@@ -212,16 +213,36 @@ Global Flags:
 - Process name spoofing
 - ptrace attachment detection
 
+### Linux Container Security Scanner
+- Privileged container detection (all capabilities)
+- Dangerous capability analysis (SYS_ADMIN, SYS_PTRACE, SYS_MODULE, etc.)
+- Mounted Docker/containerd socket detection
+- Host namespace sharing (PID, network)
+- Sensitive host path mounts (/etc, /proc/sys, cgroups)
+- Container escape tool detection (docker, kubectl, nsenter)
+- Writable /proc/sys/kernel/core_pattern detection
+- Raw device access (/dev/sda, /dev/mem)
+- Exposed Docker socket permissions on host
+
+### Linux Systemd Timer Scanner
+- Comprehensive timer unit analysis
+- Service content pattern matching
+- Download/execute and reverse shell detection
+- Cryptominer detection in timer services
+- User-level timer scanning
+- Non-standard service location detection
+
 ### Windows Registry Scanner
 - Startup/Run key persistence (18 registry locations)
 - Winlogon Shell/Userinit/Notify hijacking
 - Image File Execution Options (IFEO) debugger injection
 - AppInit_DLLs system-wide injection
-- COM object hijacking with CLSID validation
+- COM object hijacking with CLSID validation and legitimate whitelist (17+ known CLSIDs)
 - Browser Helper Objects (BHO) with legitimate whitelist
 - Credential provider abuse
 - LSA security/authentication packages
 - Group Policy script persistence (scripts.ini)
+- Scheduled task content analysis (malicious patterns, suspicious paths, privileged script execution)
 - 42+ malicious pattern detections including:
   - Encoded PowerShell commands (-enc, -e, base64)
   - Download cradles (certutil, bitsadmin, curl, wget)
@@ -283,6 +304,9 @@ SentinelGuard detects techniques from multiple ATT&CK categories:
 | T1562.001 | Disable or Modify Tools (AMSI/ETW) |
 | T1087 | Account Discovery |
 | T1482 | Domain Trust Discovery |
+| T1053.005 | Scheduled Task/Job: Scheduled Task |
+| T1611 | Escape to Host (Container) |
+| T1610 | Deploy Container |
 
 ## Architecture
 

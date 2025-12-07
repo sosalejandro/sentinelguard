@@ -2,6 +2,7 @@ package entity
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -81,9 +82,9 @@ func (f *Finding) WithDetail(key string, value interface{}) *Finding {
 	return f
 }
 
-var idCounter int
+var idCounter int64
 
 func generateID() string {
-	idCounter++
-	return fmt.Sprintf("FIND-%06d", idCounter)
+	id := atomic.AddInt64(&idCounter, 1)
+	return fmt.Sprintf("FIND-%06d", id)
 }

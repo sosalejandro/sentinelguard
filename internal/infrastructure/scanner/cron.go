@@ -205,13 +205,33 @@ func (s *CronScanner) analyzeCronLinesCriticalOnly(lines []string, source string
 func (s *CronScanner) scanSystemdTimers(ctx context.Context) []*entity.Finding {
 	s.Logger().Debug("scanning systemd timers")
 
+	var findings []*entity.Finding
+
+	// Get list of all timers
 	lines, err := s.RunCommand(ctx, "systemctl", "list-timers", "--all", "--no-pager")
 	if err != nil {
 		return nil
 	}
 
-	var findings []*entity.Finding
+	// Extract timer names from the list
+	var timerNames []string
 	for _, line := range lines {
+		// Skip header and empty lines
+		if strings.Contains(line, "NEXT") || strings.Contains(line, "ACTIVATES") ||
+			strings.Contains(line, "timers listed") || strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		// Timer name is usually in the UNIT column
+		fields := strings.Fields(line)
+		for _, field := range fields {
+			if strings.HasSuffix(field, ".timer") {
+				timerNames = append(timerNames, field)
+				break
+			}
+		}
+
+		// Quick check for temp paths in the list output
 		if strings.Contains(line, "/tmp/") || strings.Contains(line, "/dev/shm/") {
 			finding := entity.NewFinding(
 				entity.CategoryCron,
@@ -219,6 +239,143 @@ func (s *CronScanner) scanSystemdTimers(ctx context.Context) []*entity.Finding {
 				"Systemd timer referencing temp directory",
 				"Timer unit references temporary directory",
 			).WithDetail("timer_line", line)
+			findings = append(findings, finding)
+		}
+	}
+
+	// Analyze each timer's associated service
+	for _, timerName := range timerNames {
+		select {
+		case <-ctx.Done():
+			return findings
+		default:
+		}
+
+		timerFindings := s.analyzeSystemdTimer(ctx, timerName)
+		findings = append(findings, timerFindings...)
+	}
+
+	// Also check user timers if running with user permissions
+	userTimerLines, err := s.RunCommand(ctx, "systemctl", "--user", "list-timers", "--all", "--no-pager")
+	if err == nil {
+		for _, line := range userTimerLines {
+			if strings.Contains(line, "NEXT") || strings.Contains(line, "ACTIVATES") ||
+				strings.Contains(line, "timers listed") || strings.TrimSpace(line) == "" {
+				continue
+			}
+
+			fields := strings.Fields(line)
+			for _, field := range fields {
+				if strings.HasSuffix(field, ".timer") {
+					userFindings := s.analyzeSystemdTimer(ctx, field)
+					findings = append(findings, userFindings...)
+					break
+				}
+			}
+		}
+	}
+
+	return findings
+}
+
+func (s *CronScanner) analyzeSystemdTimer(ctx context.Context, timerName string) []*entity.Finding {
+	var findings []*entity.Finding
+
+	// Get the service name associated with this timer
+	serviceName := strings.TrimSuffix(timerName, ".timer") + ".service"
+
+	// Get service unit content using systemctl cat
+	serviceContent, err := s.ExecCommand(ctx, "systemctl", "cat", serviceName)
+	if err != nil {
+		// Try user service
+		serviceContent, err = s.ExecCommand(ctx, "systemctl", "--user", "cat", serviceName)
+		if err != nil {
+			return nil
+		}
+	}
+
+	// Check for suspicious patterns in service content
+	suspiciousPatterns := []struct {
+		pattern  *regexp.Regexp
+		severity entity.Severity
+		reason   string
+	}{
+		// Download and execute
+		{
+			pattern:  regexp.MustCompile(`(?i)curl.*\|.*sh|wget.*\|.*sh|curl.*\|.*bash|wget.*\|.*bash`),
+			severity: entity.SeverityCritical,
+			reason:   "Download and execute pattern in systemd service",
+		},
+		// Reverse shells
+		{
+			pattern:  regexp.MustCompile(`(?i)nc\s+-[el]|ncat\s+-[el]|netcat\s+-[el]`),
+			severity: entity.SeverityCritical,
+			reason:   "Netcat listener in systemd service",
+		},
+		{
+			pattern:  regexp.MustCompile(`(?i)/dev/tcp/|/dev/udp/`),
+			severity: entity.SeverityCritical,
+			reason:   "Bash network redirection in systemd service",
+		},
+		// Suspicious paths
+		{
+			pattern:  regexp.MustCompile(`ExecStart=.*/tmp/|ExecStart=.*/dev/shm/|ExecStart=.*/var/tmp/`),
+			severity: entity.SeverityHigh,
+			reason:   "Service executes from temp directory",
+		},
+		{
+			pattern:  regexp.MustCompile(`ExecStart=.*\\.`), // Hidden file
+			severity: entity.SeverityMedium,
+			reason:   "Service executes hidden file",
+		},
+		// Encoded commands
+		{
+			pattern:  regexp.MustCompile(`(?i)base64.*-d|base64.*--decode`),
+			severity: entity.SeverityHigh,
+			reason:   "Base64 decode in systemd service",
+		},
+		// Cryptocurrency miners
+		{
+			pattern:  regexp.MustCompile(`(?i)xmrig|minerd|cpuminer|cryptominer`),
+			severity: entity.SeverityHigh,
+			reason:   "Potential cryptominer in systemd service",
+		},
+		// Script interpreters with inline commands
+		{
+			pattern:  regexp.MustCompile(`(?i)python.*-c.*import|perl.*-e.*socket|ruby.*-rsocket`),
+			severity: entity.SeverityHigh,
+			reason:   "Inline script execution in systemd service",
+		},
+	}
+
+	for _, sp := range suspiciousPatterns {
+		if sp.pattern.MatchString(serviceContent) {
+			finding := entity.NewFinding(
+				entity.CategoryCron,
+				sp.severity,
+				"Suspicious systemd timer service",
+				sp.reason,
+			).WithDetail("timer", timerName).
+				WithDetail("service", serviceName).
+				WithDetail("pattern", sp.pattern.String())
+			findings = append(findings, finding)
+		}
+	}
+
+	// Check for non-standard service locations (user-created services)
+	if !strings.Contains(serviceContent, "/usr/lib/systemd/") &&
+		!strings.Contains(serviceContent, "/lib/systemd/") &&
+		!strings.Contains(serviceContent, "/etc/systemd/system/") {
+		// Check if it's a user service or in a non-standard location
+		if strings.Contains(serviceContent, ".config/systemd/") ||
+			strings.Contains(serviceContent, "/run/") {
+			finding := entity.NewFinding(
+				entity.CategoryCron,
+				entity.SeverityMedium,
+				"User-level systemd timer",
+				"Timer service is user-controlled and may bypass system policies",
+			).WithDetail("timer", timerName).
+				WithDetail("service", serviceName)
 			findings = append(findings, finding)
 		}
 	}

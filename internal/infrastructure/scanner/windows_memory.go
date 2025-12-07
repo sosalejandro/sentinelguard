@@ -607,10 +607,49 @@ func (s *WindowsMemoryScanner) checkSuspiciousLocations(ctx context.Context, pro
 func (s *WindowsMemoryScanner) checkHollowProcesses(ctx context.Context, processes []windowsProcess) []*entity.Finding {
 	var findings []*entity.Finding
 
-	// Check for potential process hollowing indicators
-	// Hollowed processes often have:
-	// 1. Image path doesn't match expected location
-	// 2. Command line doesn't match process name
+	// Process hollowing detection with improved heuristics to reduce false positives
+	// Hollowed processes typically have mismatches between:
+	// 1. Process name and the actual executable being run
+	// 2. Image path and expected system locations
+	// 3. Command line referencing a completely different executable
+
+	// Processes that commonly have command lines not matching their names (not hollowing)
+	legitimateMismatch := map[string]bool{
+		"cmd.exe":            true, // Runs commands
+		"powershell.exe":     true, // Runs scripts
+		"pwsh.exe":           true, // PowerShell Core
+		"conhost.exe":        true, // Console host
+		"svchost.exe":        true, // Service host with -k flag
+		"dllhost.exe":        true, // COM surrogate
+		"wscript.exe":        true, // Script host
+		"cscript.exe":        true, // Script host
+		"mshta.exe":          true, // HTML application host
+		"rundll32.exe":       true, // DLL execution
+		"regsvr32.exe":       true, // COM registration
+		"msiexec.exe":        true, // Installer
+		"werfault.exe":       true, // Windows Error Reporting
+		"wmiprvse.exe":       true, // WMI Provider
+		"taskeng.exe":        true, // Task scheduler engine
+		"taskhostw.exe":      true, // Task host window
+		"backgroundtaskhost.exe": true, // UWP background tasks
+		"runtimebroker.exe":  true, // Runtime broker
+		"applicationframehost.exe": true, // UWP frame host
+		"searchprotocolhost.exe": true, // Search protocol
+		"searchfilterhost.exe": true, // Search filter
+		"searchindexer.exe":  true, // Search indexer
+		"smartscreen.exe":    true, // SmartScreen
+		"consent.exe":        true, // UAC consent
+	}
+
+	// System processes that should ALWAYS run from System32/SysWOW64
+	systemProcesses := map[string]bool{
+		"lsass.exe":     true,
+		"csrss.exe":     true,
+		"smss.exe":      true,
+		"services.exe":  true,
+		"winlogon.exe":  true,
+		"wininit.exe":   true,
+	}
 
 	for _, proc := range processes {
 		select {
@@ -619,35 +658,93 @@ func (s *WindowsMemoryScanner) checkHollowProcesses(ctx context.Context, process
 		default:
 		}
 
+		nameLower := strings.ToLower(proc.Name)
+		imagePathLower := strings.ToLower(proc.ImagePath)
+
+		// Check 1: System processes running from wrong location (strong indicator)
+		if systemProcesses[nameLower] && proc.ImagePath != "" {
+			if !strings.Contains(imagePathLower, `\windows\system32\`) &&
+				!strings.Contains(imagePathLower, `\windows\syswow64\`) {
+				findings = append(findings, &entity.Finding{
+					ID:          fmt.Sprintf("winmem-hollow-sysproc-%d", proc.PID),
+					Category:    entity.CategoryProcess,
+					Severity:    entity.SeverityCritical,
+					Title:       "Critical system process running from wrong location",
+					Description: fmt.Sprintf("%s should only run from System32", proc.Name),
+					Path:        proc.ImagePath,
+					Details: map[string]interface{}{
+						"pid":           proc.PID,
+						"name":          proc.Name,
+						"image_path":    proc.ImagePath,
+						"expected_path": `C:\Windows\System32\`,
+						"technique":     "T1055.012 - Process Hollowing",
+						"confidence":    "HIGH - System process from wrong location",
+					},
+				})
+				continue
+			}
+		}
+
+		// Skip processes known to have legitimate command line mismatches
+		if legitimateMismatch[nameLower] {
+			continue
+		}
+
+		// Skip if no command line or image path
 		if proc.ImagePath == "" || proc.CommandLine == "" {
 			continue
 		}
 
-		// Check if command line references different executable
 		cmdLower := strings.ToLower(proc.CommandLine)
-		nameLower := strings.ToLower(proc.Name)
 
-		// If command line doesn't contain the process name, might be hollowed
-		if !strings.Contains(cmdLower, strings.TrimSuffix(nameLower, ".exe")) {
-			// Skip if it's a common legitimate case
-			if nameLower == "cmd.exe" || nameLower == "powershell.exe" ||
-				nameLower == "conhost.exe" || nameLower == "svchost.exe" {
-				continue
+		// Check 2: Command line references a completely different executable
+		// More sophisticated check: look for another .exe in the command line
+		// that doesn't match the process name
+		procBaseName := strings.TrimSuffix(nameLower, ".exe")
+
+		// Look for .exe references in command line
+		exePattern := regexp.MustCompile(`(?i)([a-z0-9_-]+)\.exe`)
+		matches := exePattern.FindAllStringSubmatch(cmdLower, -1)
+
+		suspiciousExeFound := false
+		var suspiciousExe string
+		for _, match := range matches {
+			if len(match) >= 2 {
+				exeName := match[1]
+				// Check if this exe name is completely different from process name
+				if exeName != procBaseName && exeName != "" {
+					// Check if it's not just a path component containing the process
+					if !strings.Contains(exeName, procBaseName) && !strings.Contains(procBaseName, exeName) {
+						// Check for truly suspicious cases: known attack executables
+						suspiciousExes := []string{"cmd", "powershell", "pwsh", "mshta", "wscript", "cscript"}
+						for _, sus := range suspiciousExes {
+							if exeName == sus && !legitimateMismatch[nameLower] {
+								suspiciousExeFound = true
+								suspiciousExe = match[0]
+								break
+							}
+						}
+					}
+				}
 			}
+		}
 
+		if suspiciousExeFound {
 			findings = append(findings, &entity.Finding{
 				ID:          fmt.Sprintf("winmem-hollow-%d", proc.PID),
 				Category:    entity.CategoryProcess,
 				Severity:    entity.SeverityHigh,
 				Title:       "Potential process hollowing detected",
-				Description: "Process command line doesn't match process name",
+				Description: fmt.Sprintf("Process %s appears to be running %s", proc.Name, suspiciousExe),
 				Path:        proc.ImagePath,
 				Details: map[string]interface{}{
-					"pid":         proc.PID,
-					"name":        proc.Name,
-					"commandline": proc.CommandLine,
-					"image_path":  proc.ImagePath,
-					"technique":   "T1055.012 - Process Hollowing",
+					"pid":            proc.PID,
+					"name":           proc.Name,
+					"commandline":    proc.CommandLine,
+					"image_path":     proc.ImagePath,
+					"suspicious_exe": suspiciousExe,
+					"technique":      "T1055.012 - Process Hollowing",
+					"confidence":     "MEDIUM - Command line suggests different executable",
 				},
 			})
 		}

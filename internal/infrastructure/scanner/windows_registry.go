@@ -135,6 +135,44 @@ var (
 		"{27B4851A-3207-45A2-B947-BE8AFE6163AB}": "Norton Toolbar",
 	}
 
+	// Known legitimate HKCU CLSIDs to reduce COM hijacking false positives
+	// These are commonly registered by legitimate applications
+	legitimateCOMCLSIDs = map[string]string{
+		// Microsoft Office
+		"{000209FF-0000-0000-C000-000000000046}": "Microsoft Word Application",
+		"{00024500-0000-0000-C000-000000000046}": "Microsoft Excel Application",
+		"{91493441-5A91-11CF-8700-00AA0060263B}": "Microsoft PowerPoint Application",
+		"{0006F03A-0000-0000-C000-000000000046}": "Microsoft Outlook Application",
+		// Windows Shell Extensions
+		"{86CA1AA0-34AA-4E8B-A509-50C905BAE2A2}": "Windows 11 Context Menu",
+		"{1D2680C9-0E2A-469D-B787-065558BC7D43}": "Fusion Cache",
+		"{018D5C66-4533-4307-9B53-224DE2ED1FE6}": "OneDrive Shell Extension",
+		"{CB3D0F55-BC2C-4C1A-85ED-23ED75B5106B}": "Windows Search Protocol Host",
+		// Common application frameworks
+		"{D5CDD505-2E9C-101B-9397-08002B2CF9AE}": "Property Page Shell Extension",
+		"{3D1975AF-48C6-4F8E-A182-BE0E08FA86A9}": ".NET Framework",
+		"{F5078F32-C551-11D3-89B9-0000F81FE221}": "MSXML DOM Document 3.0",
+		"{2933BF90-7B36-11D2-B20E-00C04F983E60}": "MSXML DOM Document",
+		// Visual Studio
+		"{B4F97281-0DBD-4835-9ED8-7DFB966E87FF}": "Visual Studio Code Context Handler",
+		// Adobe
+		"{B801CA65-A1FC-11D0-85AD-444553540000}": "Adobe PDF IFilter",
+		// Google
+		"{A2DF06F9-A21A-44A8-8A99-8B9C84F29160}": "Google Chrome",
+		// Nvidia
+		"{B2FE1952-0186-46C3-BAEC-A80AA35AC5B8}": "NVIDIA Display Container LS",
+	}
+
+	// Legitimate paths for COM servers (not suspicious even in HKCU)
+	legitimateCOMPaths = []string{
+		`\microsoft\`,
+		`\windows\system32\`,
+		`\windows\syswow64\`,
+		`\program files\`,
+		`\program files (x86)\`,
+		`\common files\`,
+	}
+
 	// Suspicious Winlogon values
 	suspiciousWinlogonValues = []string{
 		"Shell",
@@ -201,6 +239,11 @@ func (s *WindowsRegistryScanner) Scan(ctx context.Context) ([]*entity.Finding, e
 
 	// Check for known malware registry indicators
 	if f := s.checkKnownMalwareIndicators(ctx); f != nil {
+		findings = append(findings, f...)
+	}
+
+	// Check scheduled tasks for malicious content
+	if f := s.checkScheduledTasks(ctx); f != nil {
 		findings = append(findings, f...)
 	}
 
@@ -554,6 +597,7 @@ func (s *WindowsRegistryScanner) checkCOMHijacking(ctx context.Context) []*entit
 	// Look for InprocServer32 or LocalServer32 entries
 	lines := strings.Split(output, "\n")
 	var currentKey string
+	var currentCLSID string
 	for _, line := range lines {
 		select {
 		case <-ctx.Done():
@@ -565,6 +609,14 @@ func (s *WindowsRegistryScanner) checkCOMHijacking(ctx context.Context) []*entit
 
 		if strings.HasPrefix(line, "HKEY_") {
 			currentKey = line
+			// Extract CLSID from the key path
+			parts := strings.Split(currentKey, "\\")
+			for _, part := range parts {
+				if strings.HasPrefix(part, "{") && strings.HasSuffix(part, "}") {
+					currentCLSID = part
+					break
+				}
+			}
 			continue
 		}
 
@@ -575,19 +627,52 @@ func (s *WindowsRegistryScanner) checkCOMHijacking(ctx context.Context) []*entit
 			fields := strings.Fields(line)
 			if len(fields) >= 3 {
 				serverPath := strings.Join(fields[2:], " ")
+				serverPathLower := strings.ToLower(serverPath)
 
-				// User-level COM overrides are often suspicious
+				// Skip if this is a known legitimate CLSID
+				if _, isLegitimate := legitimateCOMCLSIDs[currentCLSID]; isLegitimate {
+					s.log.Debug("skipping known legitimate COM CLSID",
+						zap.String("clsid", currentCLSID),
+						zap.String("path", serverPath))
+					continue
+				}
+
+				// Skip if the server path is in a legitimate location
+				isLegitPath := false
+				for _, legitPath := range legitimateCOMPaths {
+					if strings.Contains(serverPathLower, legitPath) {
+						isLegitPath = true
+						break
+					}
+				}
+				if isLegitPath {
+					s.log.Debug("skipping COM registration with legitimate path",
+						zap.String("clsid", currentCLSID),
+						zap.String("path", serverPath))
+					continue
+				}
+
+				// Determine severity based on server path
+				severity := entity.SeverityMedium
+				if s.isSuspiciousPath(serverPath) {
+					severity = entity.SeverityCritical
+				} else {
+					// User-level COM in non-standard location is still suspicious
+					severity = entity.SeverityHigh
+				}
+
 				findings = append(findings, &entity.Finding{
-					ID:          fmt.Sprintf("winreg-comhijack-%s", sanitizeID(currentKey)),
+					ID:          fmt.Sprintf("winreg-comhijack-%s", sanitizeID(currentCLSID)),
 					Category:    entity.CategoryPersistence,
-					Severity:    entity.SeverityHigh,
+					Severity:    severity,
 					Title:       "Potential COM object hijacking",
 					Description: "User-level CLSID registration can override system COM objects",
 					Path:        currentKey,
 					Details: map[string]interface{}{
-						"clsid":       currentKey,
+						"clsid":       currentCLSID,
 						"server_path": serverPath,
 						"technique":   "T1546.015 - COM Hijacking",
+						"note":        "Not in known legitimate CLSID list",
 					},
 				})
 			}
@@ -722,6 +807,173 @@ func (s *WindowsRegistryScanner) checkKnownMalwareIndicators(ctx context.Context
 	}
 
 	return findings
+}
+
+func (s *WindowsRegistryScanner) checkScheduledTasks(ctx context.Context) []*entity.Finding {
+	var findings []*entity.Finding
+
+	// Get scheduled tasks using schtasks with verbose output
+	output, err := s.ExecCommand(ctx, "schtasks", "/query", "/fo", "csv", "/v")
+	if err != nil {
+		s.log.Debug("failed to query scheduled tasks", zap.Error(err))
+		return nil
+	}
+
+	lines := strings.Split(output, "\n")
+	var headerMap map[string]int
+
+	for i, line := range lines {
+		select {
+		case <-ctx.Done():
+			return findings
+		default:
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		fields := s.parseScheduledTaskCSVLine(line)
+
+		// Parse header line
+		if i == 0 || headerMap == nil {
+			headerMap = make(map[string]int)
+			for j, field := range fields {
+				cleanField := strings.Trim(field, "\"")
+				headerMap[cleanField] = j
+			}
+			continue
+		}
+
+		// Extract task information
+		var taskName, taskAction, taskState string
+
+		if idx, ok := headerMap["TaskName"]; ok && idx < len(fields) {
+			taskName = strings.Trim(fields[idx], "\"")
+		}
+		if idx, ok := headerMap["Task To Run"]; ok && idx < len(fields) {
+			taskAction = strings.Trim(fields[idx], "\"")
+		}
+		if idx, ok := headerMap["Status"]; ok && idx < len(fields) {
+			taskState = strings.Trim(fields[idx], "\"")
+		}
+
+		// Skip system tasks (Microsoft Windows tasks)
+		if strings.HasPrefix(taskName, "\\Microsoft\\Windows\\") {
+			continue
+		}
+
+		// Skip empty actions
+		if taskAction == "" || taskAction == "N/A" {
+			continue
+		}
+
+		// Check task action for malicious patterns
+		for _, pattern := range maliciousPatterns {
+			if pattern.pattern.MatchString(taskAction) {
+				findings = append(findings, &entity.Finding{
+					ID:          fmt.Sprintf("winreg-schtask-malicious-%s", sanitizeID(taskName)),
+					Category:    entity.CategoryPersistence,
+					Severity:    pattern.severity,
+					Title:       "Suspicious scheduled task detected",
+					Description: fmt.Sprintf("Scheduled task contains %s", pattern.description),
+					Path:        taskName,
+					Details: map[string]interface{}{
+						"task_name":   taskName,
+						"task_action": taskAction,
+						"task_state":  taskState,
+						"pattern":     pattern.description,
+						"technique":   "T1053.005 - Scheduled Task/Job: Scheduled Task",
+					},
+				})
+				break
+			}
+		}
+
+		// Check for suspicious paths in task actions
+		if s.isSuspiciousPath(taskAction) {
+			findings = append(findings, &entity.Finding{
+				ID:          fmt.Sprintf("winreg-schtask-suspath-%s", sanitizeID(taskName)),
+				Category:    entity.CategoryPersistence,
+				Severity:    entity.SeverityMedium,
+				Title:       "Scheduled task with suspicious path",
+				Description: "Task executes from non-standard location",
+				Path:        taskName,
+				Details: map[string]interface{}{
+					"task_name":   taskName,
+					"task_action": taskAction,
+					"task_state":  taskState,
+				},
+			})
+		}
+
+		// Check for tasks created by non-Microsoft sources with admin execution
+		if !strings.HasPrefix(taskName, "\\Microsoft\\") && taskState == "Ready" {
+			// Check if it runs as SYSTEM or admin
+			var runAsUser string
+			if idx, ok := headerMap["Run As User"]; ok && idx < len(fields) {
+				runAsUser = strings.ToLower(strings.Trim(fields[idx], "\""))
+			}
+			if strings.Contains(runAsUser, "system") || strings.Contains(runAsUser, "administrator") {
+				// Check for additional suspicious indicators
+				actionLower := strings.ToLower(taskAction)
+				if strings.Contains(actionLower, "powershell") ||
+					strings.Contains(actionLower, "cmd") ||
+					strings.Contains(actionLower, "wscript") ||
+					strings.Contains(actionLower, "cscript") ||
+					strings.Contains(actionLower, "mshta") {
+
+					findings = append(findings, &entity.Finding{
+						ID:          fmt.Sprintf("winreg-schtask-adminscript-%s", sanitizeID(taskName)),
+						Category:    entity.CategoryPersistence,
+						Severity:    entity.SeverityHigh,
+						Title:       "Privileged script execution via scheduled task",
+						Description: fmt.Sprintf("Task runs scripts as %s", runAsUser),
+						Path:        taskName,
+						Details: map[string]interface{}{
+							"task_name":   taskName,
+							"task_action": taskAction,
+							"run_as_user": runAsUser,
+							"risk":        "High-privilege script execution can be used for persistence",
+						},
+					})
+				}
+			}
+		}
+	}
+
+	return findings
+}
+
+// parseScheduledTaskCSVLine handles CSV parsing with proper quote handling
+func (s *WindowsRegistryScanner) parseScheduledTaskCSVLine(line string) []string {
+	var fields []string
+	var current strings.Builder
+	inQuotes := false
+
+	for _, r := range line {
+		switch r {
+		case '"':
+			inQuotes = !inQuotes
+			current.WriteRune(r)
+		case ',':
+			if inQuotes {
+				current.WriteRune(r)
+			} else {
+				fields = append(fields, current.String())
+				current.Reset()
+			}
+		default:
+			current.WriteRune(r)
+		}
+	}
+
+	if current.Len() > 0 {
+		fields = append(fields, current.String())
+	}
+
+	return fields
 }
 
 // Helper functions
