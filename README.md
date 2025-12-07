@@ -5,7 +5,7 @@ A comprehensive security scanner for Linux and Windows systems written in Go. Se
 ## Features
 
 - **16 Security Scanners** covering network, processes, filesystem, authentication, and more
-- **Full Windows Support** with registry, memory injection, and kernel/driver scanning
+- **Full Windows Support** with registry, memory injection, and kernel/driver scanning (PowerShell-first, WMIC fallback)
 - **Cross-Platform Architecture** with strategy pattern for OS-specific implementations
 - **Multiple Output Formats** - Console (colored), JSON, YAML
 - **Concurrent Scanning** with configurable parallelism
@@ -213,42 +213,51 @@ Global Flags:
 - ptrace attachment detection
 
 ### Windows Registry Scanner
-- Startup/Run key persistence (8+ registry locations)
-- Winlogon Shell/Userinit hijacking
+- Startup/Run key persistence (18 registry locations)
+- Winlogon Shell/Userinit/Notify hijacking
 - Image File Execution Options (IFEO) debugger injection
 - AppInit_DLLs system-wide injection
-- COM object hijacking
-- Browser Helper Objects (BHO)
+- COM object hijacking with CLSID validation
+- Browser Helper Objects (BHO) with legitimate whitelist
 - Credential provider abuse
 - LSA security/authentication packages
-- 18+ malicious pattern detections including:
-  - Encoded PowerShell commands
-  - Download cradles (certutil, bitsadmin)
-  - Living-off-the-land binaries (mshta, regsvr32, rundll32)
+- Group Policy script persistence (scripts.ini)
+- 42+ malicious pattern detections including:
+  - Encoded PowerShell commands (-enc, -e, base64)
+  - Download cradles (certutil, bitsadmin, curl, wget)
+  - Living-off-the-land binaries (mshta, regsvr32, rundll32, cmstp, msiexec)
+  - Script interpreters (wscript, cscript, powershell hidden window)
+  - Credential access tools (mimikatz, procdump, comsvcs MiniDump)
 
 ### Windows Memory/Process Scanner
-- Suspicious parent-child relationships (Office spawning cmd/PowerShell)
-- System processes with wrong parents (lsass, csrss, services.exe)
-- Process name typosquatting (svch0st.exe, lsasss.exe)
-- 25+ suspicious command line patterns
-- Credential dumping detection (mimikatz, procdump lsass)
+- Suspicious parent-child relationships (27 validated process trees)
+- System processes with wrong parents (lsass, csrss, services.exe, smss, wininit)
+- Process name typosquatting (svch0st.exe, lsasss.exe, crsss.exe)
+- 52+ suspicious command line patterns including:
+  - Credential dumping (mimikatz, procdump, comsvcs, pypykatz, lazagne, ntdsutil)
+  - Defense evasion (AMSI bypass, ETW patching, Defender exclusions)
+  - Reconnaissance (nltest, dsquery, AdFind, BloodHound)
+  - Lateral movement (psexec, wmic shadowcopy, vssadmin)
 - Process hollowing indicators
 - Multiple singleton process detection
-- Dangerous privilege detection (SeDebugPrivilege, SeTcbPrivilege)
+- Dangerous privilege detection (SeDebugPrivilege, SeTcbPrivilege, SeImpersonatePrivilege)
 - Suspicious DLL injection in system processes
+- PowerShell-based process enumeration with WMIC fallback
 
 ### Windows Kernel/Driver Scanner
-- Known rootkit driver detection
-- Drivers from suspicious paths
+- 33+ known rootkit driver signatures (Necurs, ZeroAccess, Turla, Uroburos, Regin, FinFisher, etc.)
+- Drivers from suspicious paths (temp, appdata, downloads)
 - System drivers in wrong locations
 - Driver signing enforcement (testsigning, nointegritychecks)
 - Kernel debug mode detection
 - Suspicious minifilter altitudes
 - Hidden/dormant driver detection
-- Secure Boot status
-- HVCI and Credential Guard status
+- Secure Boot, HVCI, and Credential Guard status
 - Callback abuse (IFEO, SilentProcessExit, AppCertDLLs)
-- WMI event subscription persistence
+- WMI event subscription persistence:
+  - CommandLineEventConsumer detection
+  - ActiveScriptEventConsumer detection
+  - FilterToConsumerBinding analysis
 
 ## MITRE ATT&CK Coverage
 
@@ -260,12 +269,20 @@ SentinelGuard detects techniques from multiple ATT&CK categories:
 | T1546.012 | Image File Execution Options Injection |
 | T1546.003 | WMI Event Subscription |
 | T1546.015 | COM Hijacking |
+| T1547.001 | Registry Run Keys / Startup Folder |
+| T1547.004 | Winlogon Helper DLL |
+| T1547.014 | Active Setup |
 | T1055 | Process Injection |
 | T1055.012 | Process Hollowing |
 | T1036.005 | Masquerading: Match Legitimate Name |
 | T1059 | Command and Scripting Interpreter |
+| T1059.001 | PowerShell |
 | T1003 | OS Credential Dumping |
-| T1547.001 | Registry Run Keys / Startup Folder |
+| T1003.001 | LSASS Memory |
+| T1003.003 | NTDS |
+| T1562.001 | Disable or Modify Tools (AMSI/ETW) |
+| T1087 | Account Discovery |
+| T1482 | Domain Trust Discovery |
 
 ## Architecture
 
