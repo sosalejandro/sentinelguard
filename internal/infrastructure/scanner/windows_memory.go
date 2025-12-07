@@ -52,48 +52,103 @@ var (
 		"cscript.exe":   {"cmd.exe", "powershell.exe"},
 	}
 
-	// Processes that should only have specific parents
+	// Processes that should only have specific parents - comprehensive list
 	validParents = map[string][]string{
-		"smss.exe":    {"System"},
-		"csrss.exe":   {"smss.exe"},
-		"wininit.exe": {"smss.exe"},
-		"winlogon.exe": {"smss.exe"},
-		"services.exe": {"wininit.exe"},
-		"lsass.exe":    {"wininit.exe"},
-		"svchost.exe":  {"services.exe", "MsMpEng.exe"},
+		// Core system processes
+		"smss.exe":      {"System"},
+		"csrss.exe":     {"smss.exe"},
+		"wininit.exe":   {"smss.exe"},
+		"winlogon.exe":  {"smss.exe"},
+		"services.exe":  {"wininit.exe"},
+		"lsass.exe":     {"wininit.exe"},
+		"lsaiso.exe":    {"wininit.exe"},
+		// Service host processes
+		"svchost.exe":   {"services.exe", "MsMpEng.exe"},
+		// Runtime and UI processes
+		"RuntimeBroker.exe":  {"svchost.exe"},
+		"dllhost.exe":        {"svchost.exe", "services.exe"},
+		"sihost.exe":         {"svchost.exe"},
+		"taskhostw.exe":      {"svchost.exe"},
+		"fontdrvhost.exe":    {"wininit.exe", "winlogon.exe"},
+		"dwm.exe":            {"winlogon.exe"},
+		// Search processes
+		"SearchIndexer.exe":  {"services.exe"},
+		"SearchApp.exe":      {"svchost.exe"},
+		"SearchUI.exe":       {"svchost.exe"},
+		"SearchHost.exe":     {"svchost.exe"},
+		// Windows components
+		"spoolsv.exe":        {"services.exe"},
+		"WmiPrvSE.exe":       {"svchost.exe"},
+		"msdtc.exe":          {"services.exe"},
+		"VaultSvc.exe":       {"services.exe"},
+		// Security processes
+		"SecurityHealthService.exe": {"services.exe"},
+		"MsMpEng.exe":        {"services.exe"},
 	}
 
-	// Suspicious command line patterns
+	// Suspicious command line patterns - comprehensive detection
 	suspiciousCmdPatterns = []struct {
 		pattern     *regexp.Regexp
 		description string
 		severity    entity.Severity
 	}{
+		// PowerShell abuse
 		{regexp.MustCompile(`(?i)powershell.*-enc`), "Encoded PowerShell", entity.SeverityCritical},
 		{regexp.MustCompile(`(?i)powershell.*frombase64`), "Base64 decode in PowerShell", entity.SeverityCritical},
 		{regexp.MustCompile(`(?i)powershell.*downloadstring`), "PowerShell download", entity.SeverityCritical},
 		{regexp.MustCompile(`(?i)powershell.*-w\s*hidden`), "Hidden PowerShell", entity.SeverityHigh},
 		{regexp.MustCompile(`(?i)powershell.*-nop`), "No-profile PowerShell", entity.SeverityMedium},
 		{regexp.MustCompile(`(?i)powershell.*bypass`), "Bypass execution policy", entity.SeverityHigh},
+		{regexp.MustCompile(`(?i)powershell.*\bIEX\b`), "PowerShell IEX", entity.SeverityHigh},
+		{regexp.MustCompile(`(?i)powershell.*invoke-expression`), "PowerShell Invoke-Expression", entity.SeverityHigh},
+		{regexp.MustCompile(`(?i)powershell.*\[System\.Net\.WebClient\]`), "PowerShell WebClient", entity.SeverityHigh},
+		// LOLBins
 		{regexp.MustCompile(`(?i)cmd.*/c.*powershell`), "CMD spawning PowerShell", entity.SeverityMedium},
 		{regexp.MustCompile(`(?i)mshta.*vbscript`), "MSHTA VBScript", entity.SeverityCritical},
 		{regexp.MustCompile(`(?i)mshta.*javascript`), "MSHTA JavaScript", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)mshta.*http`), "MSHTA remote HTA", entity.SeverityCritical},
 		{regexp.MustCompile(`(?i)regsvr32.*/s.*/n`), "Regsvr32 scriptlet", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)regsvr32.*http`), "Regsvr32 remote COM", entity.SeverityCritical},
 		{regexp.MustCompile(`(?i)rundll32.*javascript`), "Rundll32 JavaScript", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)rundll32.*vbscript`), "Rundll32 VBScript", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)cmstp.*/s`), "CMSTP INF execution", entity.SeverityCritical},
+		// Download/transfer utilities
 		{regexp.MustCompile(`(?i)certutil.*-urlcache`), "Certutil download", entity.SeverityHigh},
+		{regexp.MustCompile(`(?i)certutil.*-decode`), "Certutil decode", entity.SeverityMedium},
 		{regexp.MustCompile(`(?i)bitsadmin.*transfer`), "BITS download", entity.SeverityHigh},
+		{regexp.MustCompile(`(?i)curl\.exe.*http`), "Curl download", entity.SeverityMedium},
+		// WMI abuse
 		{regexp.MustCompile(`(?i)wmic.*process.*call.*create`), "WMIC process create", entity.SeverityHigh},
 		{regexp.MustCompile(`(?i)wmic.*/node:`), "WMIC remote execution", entity.SeverityCritical},
+		// Persistence
 		{regexp.MustCompile(`(?i)net\s+user.*/add`), "Adding user account", entity.SeverityHigh},
 		{regexp.MustCompile(`(?i)net\s+localgroup.*admin.*/add`), "Adding to admin group", entity.SeverityCritical},
 		{regexp.MustCompile(`(?i)schtasks.*/create`), "Creating scheduled task", entity.SeverityMedium},
 		{regexp.MustCompile(`(?i)reg.*add.*\\run`), "Adding Run key", entity.SeverityHigh},
+		// Defense evasion / destruction
 		{regexp.MustCompile(`(?i)vssadmin.*delete.*shadows`), "Deleting shadow copies", entity.SeverityCritical},
 		{regexp.MustCompile(`(?i)bcdedit.*/set.*recoveryenabled.*no`), "Disabling recovery", entity.SeverityCritical},
 		{regexp.MustCompile(`(?i)wbadmin.*delete`), "Deleting backups", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)wevtutil.*cl`), "Clearing event logs", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)sc.*config.*start.*disabled`), "Disabling service", entity.SeverityHigh},
+		{regexp.MustCompile(`(?i)netsh.*firewall.*disable`), "Disabling firewall", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)netsh.*advfirewall.*off`), "Disabling firewall", entity.SeverityCritical},
+		// Credential dumping
 		{regexp.MustCompile(`(?i)mimikatz`), "Mimikatz detected", entity.SeverityCritical},
 		{regexp.MustCompile(`(?i)sekurlsa`), "Credential dumping (sekurlsa)", entity.SeverityCritical},
 		{regexp.MustCompile(`(?i)procdump.*-ma.*lsass`), "LSASS memory dump", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)procdump.*lsass\.exe`), "LSASS dump via procdump", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)comsvcs\.dll.*MiniDump`), "Comsvcs.dll minidump", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)ntdsutil.*ifm`), "NTDS.dit extraction", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)ntdsutil.*"ac.*ntds"`), "NTDS.dit extraction", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)secretsdump`), "Impacket secretsdump", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)pypykatz`), "Pypykatz credential dump", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)lazagne`), "LaZagne credential harvester", entity.SeverityCritical},
+		// Reconnaissance
+		{regexp.MustCompile(`(?i)nltest.*/dclist`), "Domain controller enumeration", entity.SeverityMedium},
+		{regexp.MustCompile(`(?i)nltest.*/domain_trusts`), "Domain trust enumeration", entity.SeverityMedium},
+		{regexp.MustCompile(`(?i)dsquery.*computer`), "AD computer enumeration", entity.SeverityMedium},
+		{regexp.MustCompile(`(?i)net\s+group.*"domain admins"`), "Domain admin enumeration", entity.SeverityMedium},
 	}
 
 	// Known malicious process names (often typosquatting)
@@ -190,9 +245,57 @@ type windowsProcess struct {
 }
 
 func (s *WindowsMemoryScanner) getProcessList(ctx context.Context) ([]windowsProcess, error) {
+	// Try PowerShell first (modern approach, works on Windows 11+)
+	processes, err := s.getProcessListPowerShell(ctx)
+	if err == nil && len(processes) > 0 {
+		return processes, nil
+	}
+
+	// Fallback to WMIC (for older Windows)
+	return s.getProcessListWMIC(ctx)
+}
+
+// getProcessListPowerShell gets process list using PowerShell (preferred for Windows 11+)
+func (s *WindowsMemoryScanner) getProcessListPowerShell(ctx context.Context) ([]windowsProcess, error) {
+	script := `Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine,ExecutablePath,SessionId | ConvertTo-Csv -NoTypeInformation`
+	output, err := s.ExecCommand(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+	if err != nil {
+		return nil, err
+	}
+
+	var processes []windowsProcess
+	lines := strings.Split(output, "\n")
+
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || i == 0 { // Skip header
+			continue
+		}
+
+		fields := parseCSVLineForWindows(line)
+		if len(fields) < 6 {
+			continue
+		}
+
+		proc := windowsProcess{
+			Name:        strings.Trim(fields[2], "\""),
+			CommandLine: strings.Trim(fields[3], "\""),
+			ImagePath:   strings.Trim(fields[4], "\""),
+		}
+		proc.PID, _ = strconv.Atoi(strings.Trim(fields[0], "\""))
+		proc.PPID, _ = strconv.Atoi(strings.Trim(fields[1], "\""))
+		proc.SessionID, _ = strconv.Atoi(strings.Trim(fields[5], "\""))
+
+		processes = append(processes, proc)
+	}
+
+	return processes, nil
+}
+
+// getProcessListWMIC gets process list using WMIC (fallback for older Windows)
+func (s *WindowsMemoryScanner) getProcessListWMIC(ctx context.Context) ([]windowsProcess, error) {
 	var processes []windowsProcess
 
-	// Use WMIC for detailed process info
 	output, err := s.ExecCommand(ctx, "wmic", "process", "get",
 		"ProcessId,ParentProcessId,Name,CommandLine,ExecutablePath,SessionId",
 		"/format:csv")

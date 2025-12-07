@@ -18,21 +18,32 @@ type WindowsRegistryScanner struct {
 
 // Registry keys commonly abused for persistence
 var (
-	// Startup/Run keys
+	// Startup/Run keys - comprehensive list per MITRE ATT&CK T1547.001
 	startupRegistryKeys = []string{
+		// Standard Run keys
 		`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`,
 		`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce`,
 		`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunServices`,
 		`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunServicesOnce`,
 		`HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`,
 		`HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce`,
+		// 32-bit on 64-bit (WOW6432Node)
 		`HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run`,
 		`HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\RunOnce`,
+		`HKCU\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run`,
+		`HKCU\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\RunOnce`,
+		// Policy-based Run keys (GPO abuse)
+		`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run`,
+		`HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run`,
+		// Explorer load keys
+		`HKCU\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows`,
 	}
 
-	// Winlogon persistence
+	// Winlogon persistence - T1547.004
 	winlogonKeys = []string{
 		`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon`,
+		`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\Notify`,
+		`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList`,
 	}
 
 	// Image File Execution Options (IFEO) - used for debugger hijacking
@@ -62,30 +73,66 @@ var (
 	// Browser Helper Objects
 	bhoKey = `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Browser Helper Objects`
 
-	// Known malicious patterns in registry values
+	// Known malicious patterns in registry values - comprehensive detection
 	maliciousPatterns = []struct {
 		pattern     *regexp.Regexp
 		description string
 		severity    entity.Severity
 	}{
+		// PowerShell abuse patterns
 		{regexp.MustCompile(`(?i)powershell.*-enc`), "Encoded PowerShell command", entity.SeverityCritical},
 		{regexp.MustCompile(`(?i)powershell.*-e\s+[A-Za-z0-9+/=]{20,}`), "Base64 encoded PowerShell", entity.SeverityCritical},
 		{regexp.MustCompile(`(?i)powershell.*downloadstring`), "PowerShell download cradle", entity.SeverityCritical},
 		{regexp.MustCompile(`(?i)powershell.*invoke-expression`), "PowerShell IEX execution", entity.SeverityHigh},
+		{regexp.MustCompile(`(?i)powershell.*\bIEX\b`), "PowerShell IEX alias", entity.SeverityHigh},
 		{regexp.MustCompile(`(?i)powershell.*-w\s*hidden`), "Hidden PowerShell window", entity.SeverityHigh},
 		{regexp.MustCompile(`(?i)powershell.*bypass`), "PowerShell execution bypass", entity.SeverityHigh},
-		{regexp.MustCompile(`(?i)mshta\s+(http|vbscript)`), "MSHTA script execution", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)powershell.*invoke-webrequest`), "PowerShell web request", entity.SeverityMedium},
+		{regexp.MustCompile(`(?i)powershell.*invoke-restmethod`), "PowerShell REST call", entity.SeverityMedium},
+		{regexp.MustCompile(`(?i)powershell.*start-bitstransfer`), "PowerShell BITS transfer", entity.SeverityMedium},
+		{regexp.MustCompile(`(?i)powershell.*\[System\.Net\.WebClient\]`), "PowerShell WebClient", entity.SeverityHigh},
+		// LOLBin abuse
+		{regexp.MustCompile(`(?i)mshta\s+(http|vbscript|javascript)`), "MSHTA script execution", entity.SeverityCritical},
 		{regexp.MustCompile(`(?i)wscript.*\.vbs`), "VBScript execution", entity.SeverityMedium},
 		{regexp.MustCompile(`(?i)cscript.*\.vbs`), "CScript VBS execution", entity.SeverityMedium},
 		{regexp.MustCompile(`(?i)regsvr32.*/s.*/n.*/u.*scrobj`), "Regsvr32 COM scriptlet", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)regsvr32.*/s.*/n.*http`), "Regsvr32 remote scriptlet", entity.SeverityCritical},
 		{regexp.MustCompile(`(?i)rundll32.*javascript`), "Rundll32 JavaScript", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)rundll32.*vbscript`), "Rundll32 VBScript", entity.SeverityCritical},
+		// Download utilities
 		{regexp.MustCompile(`(?i)certutil.*-urlcache`), "Certutil download", entity.SeverityHigh},
+		{regexp.MustCompile(`(?i)certutil.*-decode`), "Certutil decode", entity.SeverityMedium},
 		{regexp.MustCompile(`(?i)bitsadmin.*/transfer`), "BitsAdmin download", entity.SeverityHigh},
+		{regexp.MustCompile(`(?i)curl\.exe.*-o`), "Curl download", entity.SeverityMedium},
+		{regexp.MustCompile(`(?i)wget.*-o`), "Wget download", entity.SeverityMedium},
+		// Credential dumping indicators
+		{regexp.MustCompile(`(?i)comsvcs\.dll.*MiniDump`), "Comsvcs.dll minidump (credential dump)", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)ntdsutil.*ifm`), "NTDS.dit extraction", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)vssadmin.*create.*shadow`), "VSS shadow copy creation", entity.SeverityMedium},
+		// Command chaining
 		{regexp.MustCompile(`(?i)cmd.*/c.*&.*&`), "Chained command execution", entity.SeverityMedium},
+		// Suspicious paths
 		{regexp.MustCompile(`(?i)\\\\[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\\`), "UNC path to IP address", entity.SeverityHigh},
 		{regexp.MustCompile(`(?i)%appdata%.*\\.*\\.*\.exe`), "Suspicious AppData executable", entity.SeverityMedium},
 		{regexp.MustCompile(`(?i)%temp%.*\.exe`), "Temp directory executable", entity.SeverityMedium},
 		{regexp.MustCompile(`(?i)%public%.*\.exe`), "Public directory executable", entity.SeverityMedium},
+		{regexp.MustCompile(`(?i)%localappdata%.*\.exe`), "LocalAppData executable", entity.SeverityMedium},
+		// Remote execution
+		{regexp.MustCompile(`(?i)wmic.*/node:`), "WMIC remote execution", entity.SeverityCritical},
+		{regexp.MustCompile(`(?i)psexec`), "PsExec remote execution", entity.SeverityHigh},
+	}
+
+	// Known legitimate BHO CLSIDs to reduce false positives
+	legitimateBHOs = map[string]string{
+		"{1FD49718-1D00-4B19-AF5F-070AF6D5D54C}": "Adobe PDF Link Helper",
+		"{AE7CD045-E861-484f-8273-0445EE161910}": "Adobe PDF Conversion Toolbar Helper",
+		"{18DF081C-E8AD-4283-A596-FA578C2EBDC3}": "Adobe PDF Link Helper",
+		"{761497BB-D6F0-462C-B6EB-D4DAF1D92D43}": "Java SSV Helper",
+		"{DBC80044-A445-435b-BC74-9C25C1C588A9}": "Java Plug-In 2 SSV Helper",
+		"{95B7759C-8C7F-4BF1-B163-73684A933233}": "AVG SafeGuard toolbar",
+		"{BF42D4A8-016E-4fcd-B1EB-837659FD77C6}": "Norton Identity Protection",
+		"{602ADB0E-4AFF-4217-8AA1-95DAC4DFA408}": "Norton Toolbar",
+		"{27B4851A-3207-45A2-B947-BE8AFE6163AB}": "Norton Toolbar",
 	}
 
 	// Suspicious Winlogon values
@@ -576,6 +623,14 @@ func (s *WindowsRegistryScanner) checkBHO(ctx context.Context) []*entity.Finding
 		if len(parts) > 0 {
 			clsid := parts[len(parts)-1]
 
+			// Check if this is a known legitimate BHO
+			if legitName, isLegit := legitimateBHOs[clsid]; isLegit {
+				s.log.Debug("skipping known legitimate BHO",
+					zap.String("clsid", clsid),
+					zap.String("name", legitName))
+				continue
+			}
+
 			// Look up the CLSID to find the DLL path
 			clsidKey := fmt.Sprintf(`HKLM\SOFTWARE\Classes\CLSID\%s\InprocServer32`, clsid)
 			entries, _ := s.queryRegistryKey(ctx, clsidKey)
@@ -588,17 +643,24 @@ func (s *WindowsRegistryScanner) checkBHO(ctx context.Context) []*entity.Finding
 				}
 			}
 
+			// Determine severity based on DLL path
+			severity := entity.SeverityMedium
+			if s.isSuspiciousPath(dllPath) {
+				severity = entity.SeverityHigh
+			}
+
 			findings = append(findings, &entity.Finding{
 				ID:          fmt.Sprintf("winreg-bho-%s", sanitizeID(clsid)),
 				Category:    entity.CategoryPersistence,
-				Severity:    entity.SeverityMedium,
-				Title:       "Browser Helper Object registered",
+				Severity:    severity,
+				Title:       "Unknown Browser Helper Object registered",
 				Description: "BHO can inject code into Internet Explorer",
 				Path:        line,
 				Details: map[string]interface{}{
 					"clsid":    clsid,
 					"dll_path": dllPath,
 					"risk":     "BHOs can monitor browser activity and inject content",
+					"note":     "Not in known legitimate BHO list",
 				},
 			})
 		}

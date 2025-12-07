@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -63,6 +64,23 @@ func (s *WindowsStrategy) ExecuteCommand(ctx context.Context, name string, args 
 	cmd := exec.CommandContext(ctx, name, args...)
 	output, err := cmd.CombinedOutput()
 	return string(output), err
+}
+
+// executePowerShell runs a PowerShell script and returns the output
+func (s *WindowsStrategy) executePowerShell(ctx context.Context, script string) (string, error) {
+	return s.ExecuteCommand(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+}
+
+// hasWMIC checks if WMIC is available on the system
+func (s *WindowsStrategy) hasWMIC() bool {
+	return commandExists("wmic")
+}
+
+// useModernCommands returns true if we should prefer PowerShell over WMIC
+// This is true for Windows 11 and later where WMIC may be removed
+func (s *WindowsStrategy) useModernCommands() bool {
+	// Always try PowerShell first, fall back to WMIC if PS fails
+	return true
 }
 
 func (s *WindowsStrategy) GetUserCrontab(ctx context.Context) ([]string, error) {
@@ -191,6 +209,49 @@ func (s *WindowsStrategy) GetNetworkConnections(ctx context.Context) ([]Connecti
 	return connections, nil
 }
 
+// parseAddressPort parses an address:port string, handling both IPv4 and IPv6
+// IPv4: 192.168.1.1:8080
+// IPv6: [::1]:8080 or [fe80::1%12]:443
+func parseAddressPort(addrPort string) (addr string, port int) {
+	// Check for IPv6 bracket notation
+	if strings.HasPrefix(addrPort, "[") {
+		// IPv6 format: [addr]:port
+		closeBracket := strings.LastIndex(addrPort, "]")
+		if closeBracket != -1 {
+			addr = addrPort[1:closeBracket]
+			if colonIdx := strings.LastIndex(addrPort[closeBracket:], ":"); colonIdx != -1 {
+				port, _ = strconv.Atoi(addrPort[closeBracket+colonIdx+1:])
+			}
+			return
+		}
+	}
+
+	// IPv4 or unbracketed format
+	// Use regex to handle edge cases
+	ipv6Pattern := regexp.MustCompile(`^(\[?[a-fA-F0-9:]+\]?):(\d+)$`)
+	ipv4Pattern := regexp.MustCompile(`^([0-9.*]+):(\d+)$`)
+
+	if matches := ipv4Pattern.FindStringSubmatch(addrPort); len(matches) == 3 {
+		addr = matches[1]
+		port, _ = strconv.Atoi(matches[2])
+		return
+	}
+
+	if matches := ipv6Pattern.FindStringSubmatch(addrPort); len(matches) == 3 {
+		addr = strings.Trim(matches[1], "[]")
+		port, _ = strconv.Atoi(matches[2])
+		return
+	}
+
+	// Fallback: find last colon (original behavior)
+	if idx := strings.LastIndex(addrPort, ":"); idx != -1 {
+		addr = addrPort[:idx]
+		port, _ = strconv.Atoi(addrPort[idx+1:])
+	}
+
+	return
+}
+
 func parseWindowsNetstatOutput(output string) []ConnectionInfo {
 	var connections []ConnectionInfo
 
@@ -213,19 +274,11 @@ func parseWindowsNetstatOutput(output string) []ConnectionInfo {
 			Protocol: protocol,
 		}
 
-		// Parse local address
-		localAddr := fields[1]
-		if idx := strings.LastIndex(localAddr, ":"); idx != -1 {
-			conn.LocalAddr = localAddr[:idx]
-			conn.LocalPort, _ = strconv.Atoi(localAddr[idx+1:])
-		}
+		// Parse local address (handles IPv4 and IPv6)
+		conn.LocalAddr, conn.LocalPort = parseAddressPort(fields[1])
 
-		// Parse foreign/remote address
-		remoteAddr := fields[2]
-		if idx := strings.LastIndex(remoteAddr, ":"); idx != -1 {
-			conn.RemoteAddr = remoteAddr[:idx]
-			conn.RemotePort, _ = strconv.Atoi(remoteAddr[idx+1:])
-		}
+		// Parse foreign/remote address (handles IPv4 and IPv6)
+		conn.RemoteAddr, conn.RemotePort = parseAddressPort(fields[2])
 
 		// Parse state and PID
 		if protocol == "tcp" {
@@ -250,12 +303,18 @@ func parseWindowsNetstatOutput(output string) []ConnectionInfo {
 }
 
 func (s *WindowsStrategy) GetProcessList(ctx context.Context) ([]ProcessInfo, error) {
-	var processes []ProcessInfo
+	// Try PowerShell first (modern approach, works on Windows 11+)
+	if s.useModernCommands() {
+		processes, err := s.getProcessListPowerShell(ctx)
+		if err == nil && len(processes) > 0 {
+			return processes, nil
+		}
+	}
 
-	// Use tasklist with verbose output
+	// Fallback to tasklist + WMIC
+	var processes []ProcessInfo
 	output, err := s.ExecuteCommand(ctx, "tasklist", "/fo", "csv", "/v")
 	if err != nil {
-		// Fallback to basic tasklist
 		return s.getProcessListBasic(ctx)
 	}
 
@@ -263,6 +322,47 @@ func (s *WindowsStrategy) GetProcessList(ctx context.Context) ([]ProcessInfo, er
 
 	// Enrich with PPID from wmic if available
 	s.enrichProcessPPID(ctx, processes)
+
+	return processes, nil
+}
+
+// getProcessListPowerShell gets process list using PowerShell (preferred for Windows 11+)
+func (s *WindowsStrategy) getProcessListPowerShell(ctx context.Context) ([]ProcessInfo, error) {
+	script := `Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine,ExecutablePath,SessionId | ConvertTo-Csv -NoTypeInformation`
+	output, err := s.executePowerShell(ctx, script)
+	if err != nil {
+		return nil, err
+	}
+
+	var processes []ProcessInfo
+	lines := strings.Split(output, "\n")
+
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || i == 0 { // Skip header
+			continue
+		}
+
+		fields := parseCSVLine(line)
+		if len(fields) < 3 {
+			continue
+		}
+
+		pid, _ := strconv.Atoi(strings.Trim(fields[0], "\""))
+		ppid, _ := strconv.Atoi(strings.Trim(fields[1], "\""))
+
+		proc := ProcessInfo{
+			PID:  pid,
+			PPID: ppid,
+			Name: strings.Trim(fields[2], "\""),
+		}
+
+		if len(fields) > 3 {
+			proc.Command = strings.Trim(fields[3], "\"")
+		}
+
+		processes = append(processes, proc)
+	}
 
 	return processes, nil
 }
@@ -457,14 +557,31 @@ func parseScheduledTasksCSV(output string) []ScheduledTask {
 func (s *WindowsStrategy) GetRegistryStartup(ctx context.Context) ([]RegistryEntry, error) {
 	var entries []RegistryEntry
 
-	// Common startup registry locations
+	// Comprehensive startup registry locations per MITRE ATT&CK T1547.001
 	startupKeys := []string{
+		// Standard Run keys
 		`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`,
 		`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce`,
 		`HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`,
 		`HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce`,
+		// 32-bit on 64-bit (WOW6432Node)
 		`HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run`,
+		`HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\RunOnce`,
+		`HKCU\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run`,
+		`HKCU\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\RunOnce`,
+		// Policy-based Run keys
+		`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run`,
+		`HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run`,
+		// RunServices (legacy, still checked by some malware)
+		`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunServices`,
+		`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunServicesOnce`,
+		// Winlogon
 		`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon`,
+		// Shell folders (startup paths)
+		`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders`,
+		`HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders`,
+		`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders`,
+		`HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders`,
 	}
 
 	for _, key := range startupKeys {
@@ -511,9 +628,58 @@ func (s *WindowsStrategy) queryRegistryKey(ctx context.Context, key string) ([]R
 
 // GetWindowsServices returns Windows services with detailed info
 func (s *WindowsStrategy) GetWindowsServices(ctx context.Context) ([]WindowsService, error) {
+	// Try PowerShell first (modern approach, works on Windows 11+)
+	if s.useModernCommands() {
+		services, err := s.getWindowsServicesPowerShell(ctx)
+		if err == nil && len(services) > 0 {
+			return services, nil
+		}
+	}
+
+	// Fallback to WMIC
+	return s.getWindowsServicesWMIC(ctx)
+}
+
+// getWindowsServicesPowerShell gets services using PowerShell (preferred for Windows 11+)
+func (s *WindowsStrategy) getWindowsServicesPowerShell(ctx context.Context) ([]WindowsService, error) {
+	script := `Get-CimInstance Win32_Service | Select-Object Name,DisplayName,State,StartMode,PathName,StartName | ConvertTo-Csv -NoTypeInformation`
+	output, err := s.executePowerShell(ctx, script)
+	if err != nil {
+		return nil, err
+	}
+
+	var services []WindowsService
+	lines := strings.Split(output, "\n")
+
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || i == 0 { // Skip header
+			continue
+		}
+
+		fields := parseCSVLine(line)
+		if len(fields) < 6 {
+			continue
+		}
+
+		service := WindowsService{
+			Name:        strings.Trim(fields[0], "\""),
+			DisplayName: strings.Trim(fields[1], "\""),
+			State:       strings.Trim(fields[2], "\""),
+			StartType:   strings.Trim(fields[3], "\""),
+			BinaryPath:  strings.Trim(fields[4], "\""),
+			Account:     strings.Trim(fields[5], "\""),
+		}
+		services = append(services, service)
+	}
+
+	return services, nil
+}
+
+// getWindowsServicesWMIC gets services using WMIC (fallback for older Windows)
+func (s *WindowsStrategy) getWindowsServicesWMIC(ctx context.Context) ([]WindowsService, error) {
 	var services []WindowsService
 
-	// Use wmic for detailed service information
 	output, err := s.ExecuteCommand(ctx, "wmic", "service", "get",
 		"Name,DisplayName,State,StartMode,PathName,StartName", "/format:csv")
 	if err != nil {
@@ -571,4 +737,62 @@ type WindowsService struct {
 	StartType   string
 	BinaryPath  string
 	Account     string
+}
+
+// PrivilegeStatus represents the current privilege level and available capabilities
+type PrivilegeStatus struct {
+	IsAdmin           bool
+	IsElevated        bool
+	CanReadHKLM       bool
+	CanReadProcesses  bool
+	CanQueryDrivers   bool
+	CanQueryServices  bool
+	MissingCapabilities []string
+}
+
+// CheckPrivileges verifies what operations are available with current privileges
+func (s *WindowsStrategy) CheckPrivileges(ctx context.Context) *PrivilegeStatus {
+	status := &PrivilegeStatus{}
+
+	// Check if running as admin
+	output, err := s.ExecuteCommand(ctx, "net", "session")
+	status.IsAdmin = err == nil && !strings.Contains(strings.ToLower(output), "access is denied")
+
+	// Check elevation status via whoami /priv
+	output, err = s.ExecuteCommand(ctx, "whoami", "/groups")
+	if err == nil {
+		status.IsElevated = strings.Contains(output, "S-1-16-12288") // High Mandatory Level
+	}
+
+	// Check HKLM access
+	_, err = s.ExecuteCommand(ctx, "reg", "query", `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion`, "/v", "ProgramFilesDir")
+	status.CanReadHKLM = err == nil
+
+	// Check process enumeration
+	_, err = s.ExecuteCommand(ctx, "tasklist")
+	status.CanReadProcesses = err == nil
+
+	// Check driver query
+	_, err = s.ExecuteCommand(ctx, "driverquery")
+	status.CanQueryDrivers = err == nil
+
+	// Check service query
+	_, err = s.ExecuteCommand(ctx, "sc", "query")
+	status.CanQueryServices = err == nil
+
+	// Build missing capabilities list
+	if !status.IsAdmin {
+		status.MissingCapabilities = append(status.MissingCapabilities, "Administrator privileges (some registry keys may be inaccessible)")
+	}
+	if !status.IsElevated {
+		status.MissingCapabilities = append(status.MissingCapabilities, "Elevated context (some process details unavailable)")
+	}
+	if !status.CanReadHKLM {
+		status.MissingCapabilities = append(status.MissingCapabilities, "HKLM registry access")
+	}
+	if !status.CanQueryDrivers {
+		status.MissingCapabilities = append(status.MissingCapabilities, "Driver enumeration")
+	}
+
+	return status
 }

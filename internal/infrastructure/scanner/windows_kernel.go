@@ -17,22 +17,46 @@ type WindowsKernelScanner struct {
 	BaseScanner
 }
 
-// Known rootkit drivers and suspicious patterns
+// Known rootkit drivers and suspicious patterns - comprehensive list
 var (
 	// Known malicious/rootkit driver names
 	knownMaliciousDrivers = map[string]string{
-		"win32k.sys":       "", // Legitimate but often targeted - skip
-		"tmlisten":         "Possible TDL rootkit component",
-		"tdss":             "TDSS/TDL rootkit",
-		"tdl":              "TDL rootkit",
-		"maxplus":          "MaxPlus rootkit",
-		"atrsd":            "Atrax rootkit",
-		"rkhdrv":           "Generic rootkit driver",
-		"mracdrv":          "Mebroot/Sinowal rootkit",
-		"gxvss":            "Suspicious gaming cheat/rootkit",
-		"beep_":            "Possible rootkit hiding as beep driver",
-		"volmgr_":          "Possible rootkit masquerading as volmgr",
-		"fltmgr_":          "Possible rootkit masquerading as fltmgr",
+		// Legitimate but often targeted - skip
+		"win32k.sys": "",
+		// Classic rootkits
+		"tmlisten":   "Possible TDL rootkit component",
+		"tdss":       "TDSS/TDL rootkit",
+		"tdl":        "TDL rootkit",
+		"maxplus":    "MaxPlus rootkit",
+		"atrsd":      "Atrax rootkit",
+		"rkhdrv":     "Generic rootkit driver",
+		"mracdrv":    "Mebroot/Sinowal rootkit",
+		// Modern rootkits
+		"necurs":     "Necurs rootkit component",
+		"zeroacc":    "ZeroAccess rootkit",
+		"zeroaccess": "ZeroAccess rootkit",
+		"uroburos":   "Turla/Uroburos rootkit",
+		"snake":      "Snake/Turla rootkit",
+		"turla":      "Turla APT rootkit",
+		"regin":      "Regin APT framework",
+		"finfisher":  "FinFisher spyware driver",
+		"finspy":     "FinSpy spyware driver",
+		// Gaming cheats / dual-use
+		"gxvss":      "Suspicious gaming cheat/rootkit",
+		"cpuz":       "CPU-Z driver (often abused)",
+		"iqvw64e":    "Intel driver (often abused by malware)",
+		"asio":       "ASIO driver (sometimes abused)",
+		// Masquerading drivers
+		"beep_":      "Possible rootkit hiding as beep driver",
+		"volmgr_":    "Possible rootkit masquerading as volmgr",
+		"fltmgr_":    "Possible rootkit masquerading as fltmgr",
+		// Coin miners
+		"winring0":   "WinRing0 driver (coin miner indicator)",
+		"winio":      "WinIO driver (kernel access, often abused)",
+		// Anti-rootkit tools (can indicate attacker recon)
+		"pchunter":   "PCHunter (anti-rootkit tool - may indicate attacker)",
+		"gmer":       "GMER (anti-rootkit tool - may indicate attacker)",
+		"rootkit":    "Generic rootkit indicator",
 	}
 
 	// Suspicious driver path patterns
@@ -674,7 +698,7 @@ func (s *WindowsKernelScanner) checkWMIPersistence(ctx context.Context) []*entit
 	// These can run arbitrary code when certain events occur
 
 	// Check for __EventFilter objects
-	output, err := s.ExecCommand(ctx, "powershell", "-Command",
+	output, err := s.ExecCommand(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command",
 		"Get-WmiObject -Namespace root\\subscription -Class __EventFilter 2>$null | Select-Object Name,Query | Format-List")
 	if err == nil && strings.TrimSpace(output) != "" {
 		// Parse WMI event filters
@@ -699,8 +723,8 @@ func (s *WindowsKernelScanner) checkWMIPersistence(ctx context.Context) []*entit
 		}
 	}
 
-	// Check for __EventConsumer objects (what runs when filter triggers)
-	output, err = s.ExecCommand(ctx, "powershell", "-Command",
+	// Check for CommandLineEventConsumer objects (shell command execution)
+	output, err = s.ExecCommand(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command",
 		"Get-WmiObject -Namespace root\\subscription -Class CommandLineEventConsumer 2>$null | Select-Object Name,CommandLineTemplate | Format-List")
 	if err == nil && strings.TrimSpace(output) != "" {
 		consumers := strings.Split(output, "Name")
@@ -719,7 +743,7 @@ func (s *WindowsKernelScanner) checkWMIPersistence(ctx context.Context) []*entit
 			}
 
 			findings = append(findings, &entity.Finding{
-				ID:          fmt.Sprintf("winkernel-wmi-consumer-%s", sanitizeID(consumer[:min(20, len(consumer))])),
+				ID:          fmt.Sprintf("winkernel-wmi-cmdconsumer-%s", sanitizeID(consumer[:min(20, len(consumer))])),
 				Category:    entity.CategoryPersistence,
 				Severity:    severity,
 				Title:       "WMI command consumer detected",
@@ -728,6 +752,58 @@ func (s *WindowsKernelScanner) checkWMIPersistence(ctx context.Context) []*entit
 				Details: map[string]interface{}{
 					"consumer":  strings.TrimSpace(consumer),
 					"technique": "T1546.003 - WMI Event Subscription",
+				},
+			})
+		}
+	}
+
+	// Check for ActiveScriptEventConsumer objects (VBScript/JScript execution)
+	output, err = s.ExecCommand(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command",
+		"Get-WmiObject -Namespace root\\subscription -Class ActiveScriptEventConsumer 2>$null | Select-Object Name,ScriptingEngine,ScriptText | Format-List")
+	if err == nil && strings.TrimSpace(output) != "" {
+		consumers := strings.Split(output, "Name")
+		for _, consumer := range consumers {
+			if strings.TrimSpace(consumer) == "" {
+				continue
+			}
+
+			findings = append(findings, &entity.Finding{
+				ID:          fmt.Sprintf("winkernel-wmi-scriptconsumer-%s", sanitizeID(consumer[:min(20, len(consumer))])),
+				Category:    entity.CategoryPersistence,
+				Severity:    entity.SeverityCritical,
+				Title:       "WMI script consumer detected",
+				Description: "WMI consumer executes VBScript/JScript on event triggers",
+				Path:        "root\\subscription\\ActiveScriptEventConsumer",
+				Details: map[string]interface{}{
+					"consumer":  strings.TrimSpace(consumer),
+					"technique": "T1546.003 - WMI Event Subscription",
+					"risk":      "Can execute arbitrary VBScript or JScript code",
+				},
+			})
+		}
+	}
+
+	// Check for __FilterToConsumerBinding objects (links filters to consumers)
+	output, err = s.ExecCommand(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command",
+		"Get-WmiObject -Namespace root\\subscription -Class __FilterToConsumerBinding 2>$null | Select-Object Filter,Consumer | Format-List")
+	if err == nil && strings.TrimSpace(output) != "" {
+		bindings := strings.Split(output, "Filter")
+		for _, binding := range bindings {
+			if strings.TrimSpace(binding) == "" {
+				continue
+			}
+
+			findings = append(findings, &entity.Finding{
+				ID:          fmt.Sprintf("winkernel-wmi-binding-%s", sanitizeID(binding[:min(20, len(binding))])),
+				Category:    entity.CategoryPersistence,
+				Severity:    entity.SeverityHigh,
+				Title:       "WMI filter-consumer binding detected",
+				Description: "Active WMI event subscription binding (filter triggers consumer)",
+				Path:        "root\\subscription\\__FilterToConsumerBinding",
+				Details: map[string]interface{}{
+					"binding":   strings.TrimSpace(binding),
+					"technique": "T1546.003 - WMI Event Subscription",
+					"risk":      "This binding activates the persistence mechanism",
 				},
 			})
 		}
