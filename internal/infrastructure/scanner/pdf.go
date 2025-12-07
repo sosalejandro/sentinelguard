@@ -33,8 +33,8 @@ type pdfPattern struct {
 	Description string
 }
 
-// PDF magic bytes
-var pdfMagic = []byte("%PDF-")
+// PDF magic bytes (used for validation)
+var _ = []byte("%PDF-") // pdfMagic - reserved for future validation
 
 // Suspicious patterns to detect in PDF files
 var pdfPatterns = []pdfPattern{
@@ -470,7 +470,7 @@ func (s *PDFScanner) scanPDFFile(ctx context.Context, path string) []*entity.Fin
 	content = content[:n]
 
 	// Also read as text for pattern matching
-	file.Seek(0, 0)
+	_, _ = file.Seek(0, 0)
 	textContent := s.readPDFText(file, s.maxScanSize)
 
 	// Combine binary and text content for scanning

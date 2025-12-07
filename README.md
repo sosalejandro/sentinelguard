@@ -1,5 +1,11 @@
 # SentinelGuard
 
+[![CI](https://github.com/sosalejandro/sentinelguard/actions/workflows/ci.yml/badge.svg)](https://github.com/sosalejandro/sentinelguard/actions/workflows/ci.yml)
+[![Release](https://github.com/sosalejandro/sentinelguard/actions/workflows/release.yml/badge.svg)](https://github.com/sosalejandro/sentinelguard/actions/workflows/release.yml)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/sosalejandro/sentinelguard)](https://go.dev/)
+[![License](https://img.shields.io/github/license/sosalejandro/sentinelguard)](LICENSE)
+[![Latest Release](https://img.shields.io/github/v/release/sosalejandro/sentinelguard)](https://github.com/sosalejandro/sentinelguard/releases/latest)
+
 A comprehensive security scanner for Linux and Windows systems written in Go. SentinelGuard performs deep inspection of your system to detect backdoors, rootkits, persistence mechanisms, malicious files, and security misconfigurations.
 
 ## Features
@@ -49,6 +55,36 @@ A comprehensive security scanner for Linux and Windows systems written in Go. Se
 
 ## Installation
 
+### Pre-built Binaries (Recommended)
+
+Download the latest release for your platform from the [Releases page](https://github.com/sosalejandro/sentinelguard/releases/latest).
+
+#### Linux/macOS
+
+```bash
+# Download (replace VERSION and PLATFORM)
+curl -LO https://github.com/sosalejandro/sentinelguard/releases/latest/download/sentinelguard_VERSION_linux_amd64.tar.gz
+
+# Extract
+tar -xzf sentinelguard_*.tar.gz
+
+# Install
+sudo mv sentinelguard /usr/local/bin/
+
+# Verify
+sentinelguard version
+```
+
+#### Windows
+
+1. Download `sentinelguard_VERSION_windows_amd64.zip` from [Releases](https://github.com/sosalejandro/sentinelguard/releases/latest)
+2. Extract the ZIP file
+3. Move `sentinelguard.exe` to a directory in your PATH
+4. Run from PowerShell or Command Prompt:
+   ```powershell
+   .\sentinelguard.exe scan
+   ```
+
 ### From Source
 
 ```bash
@@ -63,10 +99,16 @@ go build -o sentinelguard ./cmd/checker/
 sudo mv sentinelguard /usr/local/bin/
 ```
 
+### Using Go Install
+
+```bash
+go install github.com/sosalejandro/sentinelguard/cmd/checker@latest
+```
+
 ### Requirements
 
-- Go 1.21 or later (for building)
-- Linux or Windows
+- Go 1.21 or later (for building from source)
+- Linux, Windows, or macOS
 - Root/Administrator access recommended for full scanning capabilities
 
 ## Usage
@@ -393,6 +435,65 @@ schtasks /create /tn "SentinelGuard Daily Scan" /tr "sentinelguard.exe scan -f j
 - **PDF scanning** reads file contents - ensure appropriate permissions
 - **Windows registry scanning** requires appropriate permissions for HKLM keys
 
+## Development
+
+### Building
+
+```bash
+# Build for current platform
+go build -o sentinelguard ./cmd/checker/
+
+# Build for specific platform
+GOOS=windows GOARCH=amd64 go build -o sentinelguard.exe ./cmd/checker/
+GOOS=linux GOARCH=amd64 go build -o sentinelguard ./cmd/checker/
+GOOS=darwin GOARCH=arm64 go build -o sentinelguard ./cmd/checker/
+```
+
+### Testing
+
+```bash
+# Run all tests
+go test ./...
+
+# Run tests with race detection
+go test -race ./...
+
+# Run tests with coverage
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out
+```
+
+### CI/CD
+
+The project uses GitHub Actions for continuous integration and releases:
+
+- **CI Workflow**: Runs on every push and pull request
+  - Tests with race detection
+  - Multi-platform builds (Linux, Windows, macOS)
+  - Linting with golangci-lint
+
+- **Release Workflow**: Triggered by version tags
+  - Automated multi-platform builds via GoReleaser
+  - Automatic changelog generation
+  - GitHub release creation with artifacts
+
+### Automated Releases
+
+Releases are fully automated using [Release Please](https://github.com/googleapis/release-please):
+
+1. **Merge to main** - When PRs are merged to main, Release Please analyzes commits
+2. **Release PR** - It creates/updates a Release PR with changelog and version bump
+3. **Merge Release PR** - When merged, it automatically:
+   - Creates a GitHub release with the new version tag
+   - Triggers GoReleaser to build binaries for all platforms
+   - Generates SHA256 checksums
+   - Publishes downloadable assets
+
+**Version bumping follows [Conventional Commits](https://www.conventionalcommits.org/):**
+- `fix:` → Patch release (0.0.x)
+- `feat:` → Minor release (0.x.0)
+- `feat!:` or `BREAKING CHANGE:` → Major release (x.0.0)
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit pull requests.
@@ -403,6 +504,16 @@ Contributions are welcome! Please feel free to submit pull requests.
 2. Implement the `Scanner` interface
 3. Register in `cmd/checker/scan.go`
 4. Add tests and documentation
+
+### Commit Convention
+
+This project uses [Conventional Commits](https://www.conventionalcommits.org/) for changelog generation:
+
+- `feat:` New features
+- `fix:` Bug fixes
+- `docs:` Documentation changes
+- `test:` Test additions or modifications
+- `chore:` Maintenance tasks
 
 ## License
 

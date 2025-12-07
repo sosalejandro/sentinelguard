@@ -422,7 +422,7 @@ func (s *WindowsKernelScanner) checkMinifilterDrivers(ctx context.Context) []*en
 		matches := altitudeRegex.FindStringSubmatch(altitudeStr)
 		if len(matches) >= 2 {
 			var altitude int
-			fmt.Sscanf(matches[1], "%d", &altitude)
+			_, _ = fmt.Sscanf(matches[1], "%d", &altitude)
 
 			for _, altRange := range suspiciousAltitudes {
 				if altitude >= altRange.min && altitude <= altRange.max {

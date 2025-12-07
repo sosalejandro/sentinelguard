@@ -1,9 +1,11 @@
 package scanner
 
 import (
+	"bufio"
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"go.uber.org/zap"
@@ -44,21 +46,161 @@ func (s *SSHScanner) scanAuthorizedKeys(ctx context.Context) []*entity.Finding {
 	s.Logger().Debug("scanning authorized_keys files")
 
 	var findings []*entity.Finding
-	homeDir, err := os.UserHomeDir()
+
+	// Get all user home directories to scan
+	homeDirs := s.getAllUserHomeDirs()
+	if len(homeDirs) == 0 {
+		// Fallback to current user only
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return nil
+		}
+		homeDirs = []userHomeDir{{username: os.Getenv("USER"), homeDir: homeDir}}
+	}
+
+	for _, user := range homeDirs {
+		select {
+		case <-ctx.Done():
+			return findings
+		default:
+		}
+
+		authKeysPath := filepath.Join(user.homeDir, ".ssh", "authorized_keys")
+		if !s.FileExists(authKeysPath) {
+			continue
+		}
+
+		userFindings := s.scanUserAuthorizedKeys(ctx, user.username, authKeysPath)
+		findings = append(findings, userFindings...)
+	}
+
+	return findings
+}
+
+// userHomeDir holds username and home directory path
+type userHomeDir struct {
+	username string
+	homeDir  string
+}
+
+// getAllUserHomeDirs returns all user home directories
+func (s *SSHScanner) getAllUserHomeDirs() []userHomeDir {
+	if runtime.GOOS == "windows" {
+		return s.getWindowsUserHomeDirs()
+	}
+	return s.getUnixUserHomeDirs()
+}
+
+// getUnixUserHomeDirs returns user home directories from /etc/passwd
+func (s *SSHScanner) getUnixUserHomeDirs() []userHomeDir {
+	var users []userHomeDir
+
+	file, err := os.Open("/etc/passwd")
 	if err != nil {
+		s.Logger().Debug("cannot read /etc/passwd", zap.Error(err))
+		return nil
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		fields := strings.Split(line, ":")
+		if len(fields) < 6 {
+			continue
+		}
+
+		username := fields[0]
+		homeDir := fields[5]
+
+		// Skip system users with non-existent or system home directories
+		if homeDir == "" || homeDir == "/nonexistent" || homeDir == "/var/empty" {
+			continue
+		}
+
+		// Skip nologin/false shell users (typically system accounts)
+		if len(fields) >= 7 {
+			shell := fields[6]
+			if strings.Contains(shell, "nologin") || strings.Contains(shell, "false") {
+				continue
+			}
+		}
+
+		// Verify home directory exists
+		if _, err := os.Stat(homeDir); err != nil {
+			continue
+		}
+
+		users = append(users, userHomeDir{username: username, homeDir: homeDir})
+	}
+
+	return users
+}
+
+// getWindowsUserHomeDirs returns user home directories on Windows
+func (s *SSHScanner) getWindowsUserHomeDirs() []userHomeDir {
+	var users []userHomeDir
+
+	// Check common Windows user directories
+	usersDir := os.Getenv("SYSTEMDRIVE") + "\\Users"
+	if usersDir == "\\Users" {
+		usersDir = "C:\\Users"
+	}
+
+	entries, err := os.ReadDir(usersDir)
+	if err != nil {
+		s.Logger().Debug("cannot read Users directory", zap.Error(err))
 		return nil
 	}
 
-	authKeysPath := filepath.Join(homeDir, ".ssh", "authorized_keys")
-	if !s.FileExists(authKeysPath) {
-		s.Logger().Debug("no authorized_keys file found")
-		return nil
+	// Skip system directories
+	skipDirs := map[string]bool{
+		"Public":         true,
+		"Default":        true,
+		"Default User":   true,
+		"All Users":      true,
+		"desktop.ini":    true,
+		"NTUSER.DAT":     true,
 	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if skipDirs[name] || strings.HasPrefix(name, ".") {
+			continue
+		}
+
+		homeDir := filepath.Join(usersDir, name)
+		if _, err := os.Stat(homeDir); err != nil {
+			continue
+		}
+
+		users = append(users, userHomeDir{username: name, homeDir: homeDir})
+	}
+
+	return users
+}
+
+// scanUserAuthorizedKeys scans a specific user's authorized_keys file
+func (s *SSHScanner) scanUserAuthorizedKeys(ctx context.Context, username, authKeysPath string) []*entity.Finding {
+	var findings []*entity.Finding
 
 	lines, err := s.ReadFile(ctx, authKeysPath)
 	if err != nil {
 		return nil
 	}
+
+	s.Logger().Debug("scanning authorized_keys",
+		zap.String("user", username),
+		zap.String("path", authKeysPath),
+		zap.Int("keys", len(lines)),
+	)
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -66,7 +208,10 @@ func (s *SSHScanner) scanAuthorizedKeys(ctx context.Context) []*entity.Finding {
 			continue
 		}
 
-		s.Logger().Debug("found authorized key", zap.String("key_preview", truncateKey(line)))
+		s.Logger().Debug("found authorized key",
+			zap.String("user", username),
+			zap.String("key_preview", truncateKey(line)),
+		)
 
 		if strings.Contains(line, "command=") {
 			cmd := extractCommand(line)
@@ -76,6 +221,7 @@ func (s *SSHScanner) scanAuthorizedKeys(ctx context.Context) []*entity.Finding {
 				"SSH key with forced command",
 				"An SSH key has a forced command configured",
 			).WithPath(authKeysPath).
+				WithDetail("username", username).
 				WithDetail("command", cmd)
 			findings = append(findings, finding)
 		}
@@ -87,6 +233,7 @@ func (s *SSHScanner) scanAuthorizedKeys(ctx context.Context) []*entity.Finding {
 				"SSH key with restrictions",
 				"SSH key has security restrictions configured",
 			).WithPath(authKeysPath).
+				WithDetail("username", username).
 				WithDetail("restrictions", extractRestrictions(line))
 			findings = append(findings, finding)
 		}
@@ -97,7 +244,8 @@ func (s *SSHScanner) scanAuthorizedKeys(ctx context.Context) []*entity.Finding {
 				entity.SeverityMedium,
 				"SSH key without comment/identifier",
 				"SSH key has no identifying comment - may be unauthorized",
-			).WithPath(authKeysPath)
+			).WithPath(authKeysPath).
+				WithDetail("username", username)
 			findings = append(findings, finding)
 		}
 	}
@@ -105,14 +253,33 @@ func (s *SSHScanner) scanAuthorizedKeys(ctx context.Context) []*entity.Finding {
 	return findings
 }
 
+// getSSHConfigPath returns the platform-specific sshd_config path
+func (s *SSHScanner) getSSHConfigPath() string {
+	if runtime.GOOS == "windows" {
+		// OpenSSH on Windows
+		programData := os.Getenv("PROGRAMDATA")
+		if programData == "" {
+			programData = "C:\\ProgramData"
+		}
+		return filepath.Join(programData, "ssh", "sshd_config")
+	}
+	return "/etc/ssh/sshd_config"
+}
+
 func (s *SSHScanner) scanSSHConfig(ctx context.Context) []*entity.Finding {
 	s.Logger().Debug("scanning SSH config")
 
 	var findings []*entity.Finding
 
-	sshdConfigPath := "/etc/ssh/sshd_config"
+	sshdConfigPath := s.getSSHConfigPath()
+	if !s.FileExists(sshdConfigPath) {
+		s.Logger().Debug("SSH config not found", zap.String("path", sshdConfigPath))
+		return nil
+	}
+
 	lines, err := s.ReadFile(ctx, sshdConfigPath)
 	if err != nil {
+		s.Logger().Debug("failed to read SSH config", zap.String("path", sshdConfigPath), zap.Error(err))
 		return nil
 	}
 

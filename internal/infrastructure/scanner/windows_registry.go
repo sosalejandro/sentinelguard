@@ -58,14 +58,14 @@ var (
 	// Services registry
 	servicesKey = `HKLM\SYSTEM\CurrentControlSet\Services`
 
-	// COM object hijacking locations
-	comHijackKeys = []string{
+	// COM object hijacking locations (reserved for COM enumeration)
+	_ = []string{
 		`HKCU\SOFTWARE\Classes\CLSID`,
 		`HKLM\SOFTWARE\Classes\CLSID`,
 	}
 
-	// Shell extensions
-	shellExtKeys = []string{
+	// Shell extensions (reserved for shell extension scanning)
+	_ = []string{
 		`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Approved`,
 		`HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Approved`,
 	}
@@ -653,7 +653,7 @@ func (s *WindowsRegistryScanner) checkCOMHijacking(ctx context.Context) []*entit
 				}
 
 				// Determine severity based on server path
-				severity := entity.SeverityMedium
+				var severity entity.Severity
 				if s.isSuspiciousPath(serverPath) {
 					severity = entity.SeverityCritical
 				} else {

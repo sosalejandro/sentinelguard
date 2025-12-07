@@ -177,6 +177,21 @@ func (uc *ScanUseCase) runParallel(ctx context.Context, scanners []repository.Sc
 		go func(s repository.Scanner) {
 			defer wg.Done()
 
+			// Recover from scanner panics to prevent crashing the entire scan
+			defer func() {
+				if r := recover(); r != nil {
+					uc.log.Error("scanner panicked",
+						zap.String("scanner", s.Name()),
+						zap.Any("panic", r),
+						zap.Stack("stack"),
+					)
+					resultsChan <- scannerResult{
+						scannerName: s.Name(),
+						err:         fmt.Errorf("scanner panicked: %v", r),
+					}
+				}
+			}()
+
 			select {
 			case <-ctx.Done():
 				resultsChan <- scannerResult{

@@ -115,7 +115,7 @@ func (s *IntegrityScanner) checkPackageIntegrity(ctx context.Context) []*entity.
 			// S = file size mismatch
 			// c = config file
 			// M = file type mismatch
-			severity := entity.SeverityMedium
+			var severity entity.Severity
 
 			if strings.Contains(status, "5") {
 				// Checksum mismatch is serious

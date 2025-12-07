@@ -71,11 +71,6 @@ func (s *WindowsStrategy) executePowerShell(ctx context.Context, script string) 
 	return s.ExecuteCommand(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script)
 }
 
-// hasWMIC checks if WMIC is available on the system
-func (s *WindowsStrategy) hasWMIC() bool {
-	return commandExists("wmic")
-}
-
 // useModernCommands returns true if we should prefer PowerShell over WMIC
 // This is true for Windows 11 and later where WMIC may be removed
 func (s *WindowsStrategy) useModernCommands() bool {

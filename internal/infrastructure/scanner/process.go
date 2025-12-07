@@ -257,7 +257,8 @@ func (s *ProcessScanner) analyzeCommandLines(lines []string) []*entity.Finding {
 			}
 
 			// Reset for next process
-			currentPID, currentName, currentCmdLine = "", "", ""
+			currentPID, currentName = "", ""
+			currentCmdLine = "" //nolint:ineffassign // Reset for clarity, loop reassigns
 		}
 	}
 

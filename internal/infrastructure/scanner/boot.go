@@ -274,11 +274,7 @@ func (s *BootScanner) isPackageManaged(ctx context.Context, path string) bool {
 
 	// Try rpm -qf (RHEL/CentOS)
 	_, err = s.ExecCommand(ctx, "rpm", "-qf", path)
-	if err == nil {
-		return true
-	}
-
-	return false
+	return err == nil
 }
 
 func (s *BootScanner) checkGrub(ctx context.Context) []*entity.Finding {

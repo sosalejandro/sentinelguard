@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"sort"
 	"sync"
 
 	"github.com/as-main/backdoor-checker/internal/domain/entity"
@@ -31,26 +32,44 @@ func (r *Registry) Get(name string) (repository.Scanner, bool) {
 	return s, ok
 }
 
+// GetAll returns all registered scanners in deterministic order (sorted by name).
 func (r *Registry) GetAll() []repository.Scanner {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
+	// Collect names for deterministic ordering
+	names := make([]string, 0, len(r.scanners))
+	for name := range r.scanners {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	// Build result in sorted order
 	scanners := make([]repository.Scanner, 0, len(r.scanners))
-	for _, s := range r.scanners {
-		scanners = append(scanners, s)
+	for _, name := range names {
+		scanners = append(scanners, r.scanners[name])
 	}
 	return scanners
 }
 
+// GetByCategory returns scanners matching the category in deterministic order.
 func (r *Registry) GetByCategory(category entity.FindingCategory) []repository.Scanner {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	var scanners []repository.Scanner
-	for _, s := range r.scanners {
+	// Collect matching scanner names for deterministic ordering
+	var names []string
+	for name, s := range r.scanners {
 		if s.Category() == category {
-			scanners = append(scanners, s)
+			names = append(names, name)
 		}
+	}
+	sort.Strings(names)
+
+	// Build result in sorted order
+	scanners := make([]repository.Scanner, 0, len(names))
+	for _, name := range names {
+		scanners = append(scanners, r.scanners[name])
 	}
 	return scanners
 }

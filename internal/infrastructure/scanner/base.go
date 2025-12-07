@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -68,8 +69,12 @@ func (b *BaseScanner) RunCommand(ctx context.Context, name string, args ...strin
 			return nil, ctx.Err()
 		}
 		b.log.Debug("command error", zap.Error(err), zap.String("stderr", stderr.String()))
-		// Return error so callers can handle it appropriately
-		return nil, err
+		// Return error with full context for debugging
+		stderrStr := strings.TrimSpace(stderr.String())
+		if stderrStr != "" {
+			return nil, fmt.Errorf("command '%s %s' failed: %w (stderr: %s)", name, strings.Join(args, " "), err, stderrStr)
+		}
+		return nil, fmt.Errorf("command '%s %s' failed: %w", name, strings.Join(args, " "), err)
 	}
 
 	var lines []string

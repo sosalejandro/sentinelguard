@@ -19,8 +19,8 @@ type WindowsMemoryScanner struct {
 
 // Known malicious process names and patterns
 var (
-	// Processes commonly targeted for injection
-	injectionTargets = []string{
+	// Processes commonly targeted for injection (reserved for injection detection enhancement)
+	_ = []string{
 		"explorer.exe",
 		"svchost.exe",
 		"services.exe",

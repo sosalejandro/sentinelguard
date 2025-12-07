@@ -32,8 +32,8 @@ var dangerousCapabilities = map[string]string{
 	"CAP_DAC_OVERRIDE": "Bypass file permissions - can write to any file",
 }
 
-// Known container escape paths
-var containerEscapePaths = []string{
+// Known container escape paths (reserved for enhanced escape detection)
+var _ = []string{
 	"/var/run/docker.sock",       // Docker socket mount
 	"/run/docker.sock",           // Alternative Docker socket location
 	"/var/run/containerd/containerd.sock", // Containerd socket
@@ -264,14 +264,10 @@ func (s *ContainerScanner) checkHostNamespaces(ctx context.Context) []*entity.Fi
 	var findings []*entity.Finding
 
 	// Check PID namespace (host PID = can see/signal host processes)
-	pidNs, err := os.Readlink("/proc/1/ns/pid")
-	if err == nil {
-		selfPidNs, err := os.Readlink("/proc/self/ns/pid")
-		if err == nil && pidNs == selfPidNs {
-			// We share namespace with PID 1 - likely host PID namespace
-			// In a container, PID 1 should be different from our namespace
-		}
-	}
+	// Note: PID namespace check is informational - actual escape detection
+	// happens below when checking for visible host processes
+	_, _ = os.Readlink("/proc/1/ns/pid")     // Read PID 1 namespace
+	_, _ = os.Readlink("/proc/self/ns/pid")  // Read self namespace
 
 	// Check if we can see host processes
 	output, err := s.ExecCommand(ctx, "ps", "aux")
