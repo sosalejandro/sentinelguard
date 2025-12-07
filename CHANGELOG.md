@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/sosalejandro/sentinelguard/compare/v1.0.0...v1.0.1) (2025-12-07)
+
+
+### Bug Fixes
+
+* **ci:** use GoReleaser v2 for release builds ([ef8f097](https://github.com/sosalejandro/sentinelguard/commit/ef8f0971ba92439e3a5e5f6a62835bc41e4a2f45))
+
 ## 1.0.0 (2025-12-07)
 
 
