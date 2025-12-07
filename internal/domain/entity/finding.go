@@ -36,22 +36,21 @@ func (s Severity) String() string {
 type FindingCategory string
 
 const (
-	CategoryNetwork      FindingCategory = "NETWORK"
-	CategoryProcess      FindingCategory = "PROCESS"
-	CategoryCron         FindingCategory = "CRON"
-	CategorySSH          FindingCategory = "SSH"
-	CategoryStartup      FindingCategory = "STARTUP"
-	CategoryFileSystem   FindingCategory = "FILESYSTEM"
-	CategoryFilesystem   FindingCategory = "FILESYSTEM" // alias
-	CategoryUser         FindingCategory = "USER"
-	CategoryPersistence  FindingCategory = "PERSISTENCE"
-	CategoryRootkit      FindingCategory = "ROOTKIT"
-	CategoryPDF          FindingCategory = "PDF"
-	CategoryKernel       FindingCategory = "KERNEL"
-	CategoryMemory       FindingCategory = "MEMORY"
-	CategoryPAM          FindingCategory = "PAM"
-	CategoryBoot         FindingCategory = "BOOT"
-	CategoryIntegrity    FindingCategory = "INTEGRITY"
+	CategoryNetwork     FindingCategory = "NETWORK"
+	CategoryProcess     FindingCategory = "PROCESS"
+	CategoryCron        FindingCategory = "CRON"
+	CategorySSH         FindingCategory = "SSH"
+	CategoryStartup     FindingCategory = "STARTUP"
+	CategoryFileSystem  FindingCategory = "FILESYSTEM"
+	CategoryUser        FindingCategory = "USER"
+	CategoryPersistence FindingCategory = "PERSISTENCE"
+	CategoryRootkit     FindingCategory = "ROOTKIT"
+	CategoryPDF         FindingCategory = "PDF"
+	CategoryKernel      FindingCategory = "KERNEL"
+	CategoryMemory      FindingCategory = "MEMORY"
+	CategoryPAM         FindingCategory = "PAM"
+	CategoryBoot        FindingCategory = "BOOT"
+	CategoryIntegrity   FindingCategory = "INTEGRITY"
 )
 
 type Finding struct {
