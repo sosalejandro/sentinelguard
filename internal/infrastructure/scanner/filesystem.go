@@ -92,6 +92,12 @@ func (s *FilesystemScanner) scanSUIDFiles(ctx context.Context) []*entity.Finding
 	}
 
 	for _, path := range lines {
+		select {
+		case <-ctx.Done():
+			return findings
+		default:
+		}
+
 		path = strings.TrimSpace(path)
 		if path == "" {
 			continue
@@ -128,6 +134,12 @@ func (s *FilesystemScanner) scanHiddenFiles(ctx context.Context) []*entity.Findi
 	suspiciousDirs := []string{"/tmp", "/var/tmp", "/dev/shm"}
 
 	for _, dir := range suspiciousDirs {
+		select {
+		case <-ctx.Done():
+			return findings
+		default:
+		}
+
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
@@ -190,6 +202,12 @@ func (s *FilesystemScanner) scanTempDirectories(ctx context.Context) []*entity.F
 	}
 
 	for _, dir := range tempDirs {
+		select {
+		case <-ctx.Done():
+			return findings
+		default:
+		}
+
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
@@ -231,8 +249,19 @@ func (s *FilesystemScanner) scanRecentlyModifiedBinaries(ctx context.Context) []
 
 	var findings []*entity.Finding
 	for _, path := range lines {
+		select {
+		case <-ctx.Done():
+			return findings
+		default:
+		}
+
 		path = strings.TrimSpace(path)
 		if path == "" {
+			continue
+		}
+
+		// Check if file is package-managed (skip false positives from updates)
+		if s.isPackageManaged(ctx, path) {
 			continue
 		}
 
@@ -245,7 +274,7 @@ func (s *FilesystemScanner) scanRecentlyModifiedBinaries(ctx context.Context) []
 			entity.CategoryFileSystem,
 			entity.SeverityMedium,
 			"Recently modified system binary",
-			"System binary was modified within the last 7 days",
+			"System binary was modified within the last 7 days (not package-managed)",
 		).WithPath(path).
 			WithDetail("modified", info.ModTime().String()).
 			WithDetail("size", strconv.FormatInt(info.Size(), 10))
@@ -253,4 +282,21 @@ func (s *FilesystemScanner) scanRecentlyModifiedBinaries(ctx context.Context) []
 	}
 
 	return findings
+}
+
+// isPackageManaged checks if a file is managed by dpkg or rpm
+func (s *FilesystemScanner) isPackageManaged(ctx context.Context, path string) bool {
+	// Try dpkg -S (Debian/Ubuntu)
+	_, err := s.RunCommand(ctx, "dpkg", "-S", path)
+	if err == nil {
+		return true
+	}
+
+	// Try rpm -qf (RHEL/CentOS)
+	_, err = s.RunCommand(ctx, "rpm", "-qf", path)
+	if err == nil {
+		return true
+	}
+
+	return false
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"go.uber.org/zap"
@@ -82,8 +83,16 @@ type userHomeDir struct {
 	homeDir  string
 }
 
-// getAllUserHomeDirs returns all user home directories from /etc/passwd
+// getAllUserHomeDirs returns all user home directories
 func (s *SSHScanner) getAllUserHomeDirs() []userHomeDir {
+	if runtime.GOOS == "windows" {
+		return s.getWindowsUserHomeDirs()
+	}
+	return s.getUnixUserHomeDirs()
+}
+
+// getUnixUserHomeDirs returns user home directories from /etc/passwd
+func (s *SSHScanner) getUnixUserHomeDirs() []userHomeDir {
 	var users []userHomeDir
 
 	file, err := os.Open("/etc/passwd")
@@ -127,6 +136,52 @@ func (s *SSHScanner) getAllUserHomeDirs() []userHomeDir {
 		}
 
 		users = append(users, userHomeDir{username: username, homeDir: homeDir})
+	}
+
+	return users
+}
+
+// getWindowsUserHomeDirs returns user home directories on Windows
+func (s *SSHScanner) getWindowsUserHomeDirs() []userHomeDir {
+	var users []userHomeDir
+
+	// Check common Windows user directories
+	usersDir := os.Getenv("SYSTEMDRIVE") + "\\Users"
+	if usersDir == "\\Users" {
+		usersDir = "C:\\Users"
+	}
+
+	entries, err := os.ReadDir(usersDir)
+	if err != nil {
+		s.Logger().Debug("cannot read Users directory", zap.Error(err))
+		return nil
+	}
+
+	// Skip system directories
+	skipDirs := map[string]bool{
+		"Public":         true,
+		"Default":        true,
+		"Default User":   true,
+		"All Users":      true,
+		"desktop.ini":    true,
+		"NTUSER.DAT":     true,
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if skipDirs[name] || strings.HasPrefix(name, ".") {
+			continue
+		}
+
+		homeDir := filepath.Join(usersDir, name)
+		if _, err := os.Stat(homeDir); err != nil {
+			continue
+		}
+
+		users = append(users, userHomeDir{username: name, homeDir: homeDir})
 	}
 
 	return users
@@ -198,14 +253,33 @@ func (s *SSHScanner) scanUserAuthorizedKeys(ctx context.Context, username, authK
 	return findings
 }
 
+// getSSHConfigPath returns the platform-specific sshd_config path
+func (s *SSHScanner) getSSHConfigPath() string {
+	if runtime.GOOS == "windows" {
+		// OpenSSH on Windows
+		programData := os.Getenv("PROGRAMDATA")
+		if programData == "" {
+			programData = "C:\\ProgramData"
+		}
+		return filepath.Join(programData, "ssh", "sshd_config")
+	}
+	return "/etc/ssh/sshd_config"
+}
+
 func (s *SSHScanner) scanSSHConfig(ctx context.Context) []*entity.Finding {
 	s.Logger().Debug("scanning SSH config")
 
 	var findings []*entity.Finding
 
-	sshdConfigPath := "/etc/ssh/sshd_config"
+	sshdConfigPath := s.getSSHConfigPath()
+	if !s.FileExists(sshdConfigPath) {
+		s.Logger().Debug("SSH config not found", zap.String("path", sshdConfigPath))
+		return nil
+	}
+
 	lines, err := s.ReadFile(ctx, sshdConfigPath)
 	if err != nil {
+		s.Logger().Debug("failed to read SSH config", zap.String("path", sshdConfigPath), zap.Error(err))
 		return nil
 	}
 
