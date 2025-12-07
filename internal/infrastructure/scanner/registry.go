@@ -48,10 +48,8 @@ func (r *Registry) GetByCategory(category entity.FindingCategory) []repository.S
 
 	var scanners []repository.Scanner
 	for _, s := range r.scanners {
-		if cs, ok := s.(interface{ Category() entity.FindingCategory }); ok {
-			if cs.Category() == category {
-				scanners = append(scanners, s)
-			}
+		if s.Category() == category {
+			scanners = append(scanners, s)
 		}
 	}
 	return scanners

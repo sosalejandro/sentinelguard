@@ -298,6 +298,10 @@ func NewPDFScanner() *PDFScanner {
 	}
 }
 
+func (s *PDFScanner) Category() entity.FindingCategory {
+	return entity.CategoryPDF
+}
+
 // NewPDFScannerWithPaths creates a PDF scanner with custom paths
 func NewPDFScannerWithPaths(paths []string) *PDFScanner {
 	scanner := NewPDFScanner()

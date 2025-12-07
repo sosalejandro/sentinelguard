@@ -58,6 +58,10 @@ func NewBootScanner() *BootScanner {
 	}
 }
 
+func (s *BootScanner) Category() entity.FindingCategory {
+	return entity.CategoryBoot
+}
+
 func (s *BootScanner) Scan(ctx context.Context) ([]*entity.Finding, error) {
 	s.log.Debug("starting boot persistence scan")
 	var findings []*entity.Finding

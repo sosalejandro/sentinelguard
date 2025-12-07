@@ -9,6 +9,7 @@ import (
 type Scanner interface {
 	Name() string
 	Description() string
+	Category() entity.FindingCategory
 	Scan(ctx context.Context) ([]*entity.Finding, error)
 }
 

@@ -44,6 +44,10 @@ func NewIntegrityScanner() *IntegrityScanner {
 	}
 }
 
+func (s *IntegrityScanner) Category() entity.FindingCategory {
+	return entity.CategoryIntegrity
+}
+
 func (s *IntegrityScanner) Scan(ctx context.Context) ([]*entity.Finding, error) {
 	s.log.Debug("starting integrity scan")
 	var findings []*entity.Finding

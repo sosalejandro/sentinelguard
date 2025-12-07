@@ -67,6 +67,10 @@ func NewPAMScanner() *PAMScanner {
 	}
 }
 
+func (s *PAMScanner) Category() entity.FindingCategory {
+	return entity.CategoryPAM
+}
+
 func (s *PAMScanner) Scan(ctx context.Context) ([]*entity.Finding, error) {
 	s.log.Debug("starting PAM scan")
 	var findings []*entity.Finding

@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"go.uber.org/zap"
 
@@ -48,6 +47,10 @@ func NewMemoryScanner() *MemoryScanner {
 	return &MemoryScanner{
 		BaseScanner: NewBaseScanner("memory", "Hidden process and memory injection detector"),
 	}
+}
+
+func (s *MemoryScanner) Category() entity.FindingCategory {
+	return entity.CategoryMemory
 }
 
 func (s *MemoryScanner) Scan(ctx context.Context) ([]*entity.Finding, error) {
@@ -159,41 +162,12 @@ func (s *MemoryScanner) detectHiddenProcesses(ctx context.Context) []*entity.Fin
 		}
 	}
 
-	// Check for PIDs in ps but not in /proc (rare, indicates kernel manipulation)
-	// Note: Race conditions can cause false positives when processes exit during scan
-	// We use multiple verification passes to reduce false positives
-	for pid := range psPids {
-		if !procPids[pid] {
-			// First check: verify /proc entry is actually missing
-			procPath := fmt.Sprintf("/proc/%d", pid)
-			if _, err := os.Stat(procPath); err == nil {
-				// Process exists now - race condition, skip
-				continue
-			}
-
-			// Second check: wait briefly and verify again (process exit race)
-			// Most short-lived processes will have completed by now
-			time.Sleep(10 * time.Millisecond)
-			if _, err := os.Stat(procPath); err == nil {
-				// Process appeared - race condition
-				continue
-			}
-
-			// Third check: try to read /proc/[pid]/stat to confirm truly missing
-			statPath := filepath.Join(procPath, "stat")
-			if _, err := os.ReadFile(statPath); err == nil {
-				// Can read stat - process exists
-				continue
-			}
-
-			// Process is genuinely missing from /proc but was in ps
-			// This is rare and could indicate kernel-level hiding
-			// Log at debug level - most cases are legitimate process exits
-			s.log.Debug("PID in ps but consistently missing from /proc",
-				zap.Int("pid", pid),
-				zap.String("note", "Could be process exit during scan or kernel manipulation"))
-		}
-	}
+	// Note: The reverse check (PIDs in ps but not in /proc) was removed.
+	// It produced too many false positives due to TOCTOU race conditions -
+	// processes frequently exit between ps enumeration and /proc verification.
+	// Kernel-level process hiding that removes /proc entries while keeping
+	// ps visibility is extremely rare and typically requires rootkit-level access,
+	// which would be detected by other scanners.
 
 	return findings
 }
@@ -337,8 +311,17 @@ func (s *MemoryScanner) checkMemoryMappings(ctx context.Context) []*entity.Findi
 		file.Close()
 
 		// Multiple anonymous executable regions is suspicious
-		// However, JIT runtimes (Node.js, Java, Python, etc.) legitimately use many
-		jitRuntimes := []string{"node", "java", "python", "ruby", "php", "dotnet", "mono", "julia", "luajit", "claude"}
+		// However, JIT runtimes and browsers legitimately use many for JIT compilation
+		jitRuntimes := []string{
+			// Language runtimes
+			"node", "java", "python", "ruby", "php", "dotnet", "mono", "julia", "luajit",
+			// Browsers (V8, SpiderMonkey, JavaScriptCore)
+			"chrome", "chromium", "firefox", "electron", "brave", "edge", "opera", "vivaldi",
+			// Development tools
+			"vscode", "code", "atom", "sublime", "jetbrains", "idea", "pycharm", "webstorm",
+			// Other JIT-based tools
+			"claude", "cursor", "zed",
+		}
 		isJITRuntime := false
 		commLower := strings.ToLower(comm)
 		for _, runtime := range jitRuntimes {

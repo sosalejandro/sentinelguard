@@ -68,6 +68,8 @@ func (b *BaseScanner) RunCommand(ctx context.Context, name string, args ...strin
 			return nil, ctx.Err()
 		}
 		b.log.Debug("command error", zap.Error(err), zap.String("stderr", stderr.String()))
+		// Return error so callers can handle it appropriately
+		return nil, err
 	}
 
 	var lines []string

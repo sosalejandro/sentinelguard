@@ -22,12 +22,14 @@ func TestMain(m *testing.M) {
 type mockScanner struct {
 	name        string
 	description string
+	category    entity.FindingCategory
 	scanFunc    func(ctx context.Context) ([]*entity.Finding, error)
 	scanCount   int32
 }
 
-func (m *mockScanner) Name() string        { return m.name }
-func (m *mockScanner) Description() string { return m.description }
+func (m *mockScanner) Name() string                       { return m.name }
+func (m *mockScanner) Description() string                { return m.description }
+func (m *mockScanner) Category() entity.FindingCategory   { return m.category }
 func (m *mockScanner) Scan(ctx context.Context) ([]*entity.Finding, error) {
 	atomic.AddInt32(&m.scanCount, 1)
 	if m.scanFunc != nil {

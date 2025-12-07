@@ -47,6 +47,11 @@ const (
 	CategoryPersistence  FindingCategory = "PERSISTENCE"
 	CategoryRootkit      FindingCategory = "ROOTKIT"
 	CategoryPDF          FindingCategory = "PDF"
+	CategoryKernel       FindingCategory = "KERNEL"
+	CategoryMemory       FindingCategory = "MEMORY"
+	CategoryPAM          FindingCategory = "PAM"
+	CategoryBoot         FindingCategory = "BOOT"
+	CategoryIntegrity    FindingCategory = "INTEGRITY"
 )
 
 type Finding struct {

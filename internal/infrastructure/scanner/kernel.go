@@ -63,6 +63,10 @@ func NewKernelScanner() *KernelScanner {
 	}
 }
 
+func (s *KernelScanner) Category() entity.FindingCategory {
+	return entity.CategoryKernel
+}
+
 func (s *KernelScanner) Scan(ctx context.Context) ([]*entity.Finding, error) {
 	s.log.Debug("starting kernel module scan")
 	var findings []*entity.Finding
@@ -338,8 +342,12 @@ func (s *KernelScanner) checkSyscallHooks(ctx context.Context) []*entity.Finding
 
 	// Whitelist of legitimate kernel symbols that contain suspicious words
 	legitimateSymbols := []string{
-		"vmw_disable_backdoor", // VMware backdoor channel management
-		"vmw_enable_backdoor",  // VMware backdoor channel management
+		"vmw_disable_backdoor",  // VMware backdoor channel management
+		"vmw_enable_backdoor",   // VMware backdoor channel management
+		"vmw_backdoor",          // VMware guest/host communication channel
+		"vmware_backdoor",       // VMware hypercall interface
+		"vmw_send_msg_backdoor", // VMware messaging via backdoor channel
+		"vmw_recv_msg_backdoor", // VMware messaging via backdoor channel
 	}
 
 	scanner := bufio.NewScanner(file)
