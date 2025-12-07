@@ -294,9 +294,5 @@ func (s *FilesystemScanner) isPackageManaged(ctx context.Context, path string) b
 
 	// Try rpm -qf (RHEL/CentOS)
 	_, err = s.RunCommand(ctx, "rpm", "-qf", path)
-	if err == nil {
-		return true
-	}
-
-	return false
+	return err == nil
 }

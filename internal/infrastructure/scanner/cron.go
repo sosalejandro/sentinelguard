@@ -154,11 +154,7 @@ func (s *CronScanner) isPackageManaged(ctx context.Context, path string) bool {
 
 	// Try rpm -qf (RHEL/CentOS)
 	_, err = s.RunCommand(ctx, "rpm", "-qf", path)
-	if err == nil {
-		return true
-	}
-
-	return false
+	return err == nil
 }
 
 // analyzeCronLinesCriticalOnly only checks for critical patterns

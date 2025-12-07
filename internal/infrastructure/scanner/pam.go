@@ -39,8 +39,8 @@ var (
 		"/usr/lib/x86_64-linux-gnu/security",
 	}
 
-	// Critical PAM config files
-	criticalPAMConfigs = []string{
+	// Critical PAM config files (reserved for targeted config scanning)
+	_ = []string{
 		"/etc/pam.d/common-auth",
 		"/etc/pam.d/common-password",
 		"/etc/pam.d/common-session",
@@ -55,7 +55,8 @@ var (
 
 	// Known good hashes for pam_unix.so (Ubuntu/Debian)
 	// In production, these should be maintained per distribution/version
-	knownPAMUnixHashes = map[string]bool{
+	// Reserved for hash-based integrity checking
+	_ = map[string]bool{
 		// This would contain SHA256 hashes of legitimate pam_unix.so files
 		// For now, we'll check for modifications via package manager
 	}

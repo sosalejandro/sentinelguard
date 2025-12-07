@@ -22,8 +22,8 @@ type MemoryScanner struct {
 
 // Suspicious patterns in memory maps
 var (
-	// Shellcode signatures (common byte patterns)
-	shellcodePatterns = []string{
+	// Shellcode signatures (common byte patterns) - reserved for deep memory analysis
+	_ = []string{
 		"\\x31\\xc0",      // xor eax, eax (common shellcode start)
 		"\\x48\\x31\\xc0", // xor rax, rax (64-bit)
 		"/bin/sh",
