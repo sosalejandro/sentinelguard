@@ -45,26 +45,18 @@ var suspiciousPorts = map[int]string{
 	45700: "Stratum mining",
 }
 
-// Expanded suspicious IP ranges
+// Suspicious IP ranges - only include known bulletproof hosting and Tor exits
+// NOTE: Cloud providers (Linode, Vultr, OVH, AWS, GCP, Azure) are NOT included
+// as they host many legitimate services. Only specifically malicious ranges are flagged.
 var suspiciousIPPrefixes = map[string]string{
-	// Tor exit nodes (common ranges)
+	// Tor exit nodes (common ranges) - for awareness, not necessarily malicious
 	"185.220.": "Known Tor exit node range",
 	"185.129.": "Known Tor exit node range",
 	"176.10.":  "Known Tor exit node range",
 	"199.249.": "Known Tor exit node range",
-	// Known malware/C2 ranges
-	"45.33.":   "Linode range (common C2 hosting)",
-	"45.77.":   "Vultr range (common C2 hosting)",
-	"45.32.":   "Vultr range (common C2 hosting)",
-	"104.238.": "Vultr range (common C2 hosting)",
+	// Known bulletproof hosting providers that ignore abuse reports
 	"198.98.":  "Known bulletproof hosting",
 	"185.234.": "Known bulletproof hosting",
-	// Russia-based bulletproof hosting
-	"91.218.": "Eastern European hosting (verify)",
-	"91.219.": "Eastern European hosting (verify)",
-	// Known cryptomining pools
-	"142.4.":   "OVH range (verify - common mining pool host)",
-	"144.217.": "OVH range (verify - common mining pool host)",
 }
 
 func (s *NetworkScanner) Scan(ctx context.Context) ([]*entity.Finding, error) {

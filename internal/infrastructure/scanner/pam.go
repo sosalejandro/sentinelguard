@@ -159,7 +159,7 @@ func (s *PAMScanner) checkPAMConfigs(ctx context.Context) []*entity.Finding {
 
 					findings = append(findings, &entity.Finding{
 						ID:          fmt.Sprintf("pam-suspicious-%s-%s-%d", entry.Name(), module, lineNum),
-						Category:    "pam",
+						Category:    entity.CategoryPAM,
 						Severity:    severity,
 						Title:       "Suspicious PAM module configuration",
 						Description: fmt.Sprintf("%s: %s", module, description),
@@ -179,7 +179,7 @@ func (s *PAMScanner) checkPAMConfigs(ctx context.Context) []*entity.Finding {
 			if strings.Contains(line, "sufficient") && strings.Contains(line, "pam_permit") {
 				findings = append(findings, &entity.Finding{
 					ID:          fmt.Sprintf("pam-bypass-%s-%d", entry.Name(), lineNum),
-					Category:    "pam",
+					Category:    entity.CategoryPAM,
 					Severity:    entity.SeverityCritical,
 					Title:       "PAM authentication bypass detected",
 					Description: "pam_permit.so with 'sufficient' allows passwordless authentication",
@@ -237,7 +237,7 @@ func (s *PAMScanner) verifyPAMModules(ctx context.Context) []*entity.Finding {
 			if mode&0o002 != 0 { // World writable
 				findings = append(findings, &entity.Finding{
 					ID:          fmt.Sprintf("pam-worldwrite-%s", filepath.Base(pamUnixPath)),
-					Category:    "pam",
+					Category:    entity.CategoryPAM,
 					Severity:    entity.SeverityCritical,
 					Title:       "PAM module is world-writable",
 					Description: "Critical PAM module can be modified by any user",
@@ -297,7 +297,7 @@ func (s *PAMScanner) checkPAMPermit(ctx context.Context) []*entity.Finding {
 			if strings.Contains(line, "sufficient") {
 				findings = append(findings, &entity.Finding{
 					ID:          fmt.Sprintf("pam-permit-sufficient-%s", filepath.Base(config)),
-					Category:    "pam",
+					Category:    entity.CategoryPAM,
 					Severity:    entity.SeverityCritical,
 					Title:       "pam_permit with sufficient - auth bypass",
 					Description: "pam_permit.so with 'sufficient' allows passwordless login",
@@ -332,7 +332,7 @@ func (s *PAMScanner) checkPAMPermit(ctx context.Context) []*entity.Finding {
 				if pamUnixAfter {
 					findings = append(findings, &entity.Finding{
 						ID:          fmt.Sprintf("pam-permit-before-auth-%s", filepath.Base(config)),
-						Category:    "pam",
+						Category:    entity.CategoryPAM,
 						Severity:    entity.SeverityCritical,
 						Title:       "pam_permit before actual auth modules",
 						Description: "pam_permit.so appears before pam_unix.so - potential backdoor",
@@ -392,7 +392,7 @@ func (s *PAMScanner) checkPAMExec(ctx context.Context) []*entity.Finding {
 
 				findings = append(findings, &entity.Finding{
 					ID:          fmt.Sprintf("pam-exec-%s-%d", entry.Name(), i+1),
-					Category:    "pam",
+					Category:    entity.CategoryPAM,
 					Severity:    entity.SeverityHigh,
 					Title:       "PAM command execution configured",
 					Description: "pam_exec.so runs commands during authentication - verify legitimacy",
@@ -451,7 +451,7 @@ func (s *PAMScanner) checkRoguePAMModules(ctx context.Context) []*entity.Finding
 			if mode&0o002 != 0 { // World writable
 				findings = append(findings, &entity.Finding{
 					ID:          fmt.Sprintf("pam-module-worldwrite-%s", entry.Name()),
-					Category:    "pam",
+					Category:    entity.CategoryPAM,
 					Severity:    entity.SeverityCritical,
 					Title:       "World-writable PAM module",
 					Description: fmt.Sprintf("PAM module %s is world-writable", entry.Name()),
