@@ -477,21 +477,22 @@ The project uses GitHub Actions for continuous integration and releases:
   - Automatic changelog generation
   - GitHub release creation with artifacts
 
-### Creating a Release
+### Automated Releases
 
-```bash
-# Tag a new version (follows semver)
-git tag v1.0.0
+Releases are fully automated using [Release Please](https://github.com/googleapis/release-please):
 
-# Push the tag to trigger release workflow
-git push origin v1.0.0
-```
+1. **Merge to main** - When PRs are merged to main, Release Please analyzes commits
+2. **Release PR** - It creates/updates a Release PR with changelog and version bump
+3. **Merge Release PR** - When merged, it automatically:
+   - Creates a GitHub release with the new version tag
+   - Triggers GoReleaser to build binaries for all platforms
+   - Generates SHA256 checksums
+   - Publishes downloadable assets
 
-The release workflow will automatically:
-1. Build binaries for all platforms
-2. Generate changelog from conventional commits
-3. Create GitHub release with downloadable assets
-4. Generate SHA256 checksums
+**Version bumping follows [Conventional Commits](https://www.conventionalcommits.org/):**
+- `fix:` → Patch release (0.0.x)
+- `feat:` → Minor release (0.x.0)
+- `feat!:` or `BREAKING CHANGE:` → Major release (x.0.0)
 
 ## Contributing
 
